@@ -42,14 +42,30 @@ _QUOTE_RE = re.compile(r"^\s*>\s?(.*)$")
 _FENCE_RE = re.compile(r"^\s*```")
 
 
-def _inline(text):
+def _attr_escape(s):
+    """Escape a string for use inside a single-quoted XML attribute."""
+    return _xml_escape(s, {"'": "&#39;", '"': "&quot;"})
+
+
+def _code_span(escaped_body, code_font, background):
+    """Build a Pango markup span for code, optionally with a specific font.
+
+    When a code font is given we set it via `font_desc`; otherwise we fall back
+    to `<tt>` so the text is still monospace.
+    """
+    if code_font:
+        return (f"<span font_desc='{_attr_escape(code_font)}' "
+                f"background='{background}'>{escaped_body}</span>")
+    return f"<tt><span background='{background}'>{escaped_body}</span></tt>"
+
+
+def _inline(text, code_font=None):
     """Escape XML special chars then apply inline markdown → Pango markup."""
     out = _xml_escape(text)
     # Inline code first (its contents should not be further interpreted). The
-    # captured group is already escaped, which is what we want inside <tt>.
+    # captured group is already escaped, which is what we want inside the span.
     out = _CODE_RE.sub(
-        lambda m: f"<tt><span background='#f0f0f0'>{m.group(1)}</span></tt>",
-        out)
+        lambda m: _code_span(m.group(1), code_font, "#f0f0f0"), out)
     out = _BOLD_RE.sub(lambda m: f"<b>{m.group(2)}</b>", out)
     out = _ITALIC_RE.sub(lambda m: f"<i>{m.group(2)}</i>", out)
     # Links: show the link text, underlined and coloured; the URL is dropped from
@@ -61,10 +77,13 @@ def _inline(text):
     return out
 
 
-def render(text):
+def render(text, code_font=None):
     """
     Convert Markdown `text` to a Pango markup string. Always returns valid
-    markup (the result is safe to pass to set_markup).
+    markup (the result is safe to pass to set_markup / insert_markup).
+
+    If `code_font` (a Pango font-description string) is given, inline and fenced
+    code use it; otherwise code falls back to a generic monospace (`<tt>`).
     """
     lines = text.split("\n")
     out = []
@@ -74,8 +93,7 @@ def render(text):
     def flush_fence():
         if fence_buf:
             body = _xml_escape("\n".join(fence_buf))
-            out.append(
-                f"<tt><span background='#f5f5f5'>{body}</span></tt>")
+            out.append(_code_span(body, code_font, "#f5f5f5"))
             fence_buf.clear()
 
     for line in lines:
@@ -101,33 +119,33 @@ def render(text):
             size = _HEADING_SIZE.get(level, "medium")
             out.append(
                 f"<span size='{size}' weight='bold' foreground='#204a87'>"
-                f"{_inline(m.group(2))}</span>")
+                f"{_inline(m.group(2), code_font)}</span>")
             continue
 
         m = _ULIST_RE.match(line)
         if m:
             indent = "    " * (len(m.group(1)) // 2)
-            out.append(f"{indent}\u2022 {_inline(m.group(2))}")
+            out.append(f"{indent}\u2022 {_inline(m.group(2), code_font)}")
             continue
 
         m = _OLIST_RE.match(line)
         if m:
             indent = "    " * (len(m.group(1)) // 2)
-            out.append(f"{indent}{m.group(2)}. {_inline(m.group(3))}")
+            out.append(f"{indent}{m.group(2)}. {_inline(m.group(3), code_font)}")
             continue
 
         m = _QUOTE_RE.match(line)
         if m:
             out.append(
                 f"<span foreground='#5c3566'>\u2503 "
-                f"<i>{_inline(m.group(1))}</i></span>")
+                f"<i>{_inline(m.group(1), code_font)}</i></span>")
             continue
 
         if line.strip() == "":
             out.append("")
             continue
 
-        out.append(_inline(line))
+        out.append(_inline(line, code_font))
 
     if in_fence:  # unterminated fence: render what we have
         flush_fence()

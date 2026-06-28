@@ -44,9 +44,10 @@ The left sidebar is a tree:
 A search box sits at the top of the note list. Type a term and press **Enter**
 or click **Search** to filter the list to notes that match (case-insensitive) in
 either their name or their **full contents**. Searching does not happen on every
-keystroke. Clearing the box (or pressing its clear icon) removes the filter. When
-a search matches nothing, the status bar shows *No search results found!* in
-place of the item count.
+keystroke. Matching terms are highlighted in yellow in the document you're
+viewing. Clearing the box (or pressing its clear icon) removes the filter and the
+highlighting. When a search matches nothing, the status bar shows *No search
+results found!* in place of the item count.
 
 ## Menus
 
@@ -128,13 +129,25 @@ For a system-wide entry available to all users, place the file in
 
 ## Preferences
 
-Open *Edit → Preferences* to configure:
+Open *Edit → Preferences* (a tabbed dialog) to configure:
 
-- **Editor font** — the font for the whole editor.
-- **Code font** — a separate font for inline code and fenced code blocks.
-- **Toolbar style** — whether toolbar button text appears below or beside icons.
+**Fonts tab**
+- **Editor font** — the font for the editor view.
+- **Code font** — a separate font for inline code and fenced code blocks, used in
+  both the editor and the markdown preview.
+- **Markdown preview font** — the body font for the rendered preview (everything
+  except code).
+- **Editor line spacing** — extra pixels between lines in the editor (applies to
+  code too).
+- **Preview line spacing** — extra pixels between lines in the markdown preview
+  (applies to code too).
 
-These are stored in a plain, git-trackable YAML file at
+**Interface tab**
+- **Toolbar icon text placement** — whether toolbar button text appears below or
+  beside icons.
+
+Changes preview live while the dialog is open; **Save** persists them, **Cancel**
+reverts. These are stored in a plain, git-trackable YAML file at
 `~/.config/qdvcmdnb/config.yml` (or under `$XDG_CONFIG_HOME`), along with your
 list of recent workspaces (reopen them from *File → Open recent workspace*).
 

@@ -60,6 +60,8 @@ class NotebookWindow(Gtk.Window):
         self._new_tab(focus=False)
         self._apply_editor_font()
         self._apply_code_font()
+        self._apply_preview_font()
+        self._apply_line_spacing()
         self._apply_read_only()
         self._rebuild_recent_menu()
 
@@ -257,11 +259,12 @@ class NotebookWindow(Gtk.Window):
         btn_new.connect("clicked", self.on_new_note)
         toolbar.insert(btn_new, -1)
 
-        btn_save = Gtk.ToolButton(icon_name="document-save")
-        btn_save.set_label("Save note")
-        btn_save.set_tooltip_text("Save the current note")
-        btn_save.connect("clicked", self.on_save_note)
-        toolbar.insert(btn_save, -1)
+        self.btn_save = Gtk.ToolButton(icon_name="document-save")
+        self.btn_save.set_label("Save note")
+        self.btn_save.set_tooltip_text("Save the current note")
+        self.btn_save.set_sensitive(False)  # (#4) enabled only when dirty
+        self.btn_save.connect("clicked", self.on_save_note)
+        toolbar.insert(self.btn_save, -1)
 
         toolbar.insert(Gtk.SeparatorToolItem(), -1)
 
@@ -280,7 +283,7 @@ class NotebookWindow(Gtk.Window):
         # Preview toggle: when active, all tabs show rendered markdown (read-only)
         # and the Read-only button is disabled. Applies across all tabs.
         self.btn_preview = Gtk.ToggleToolButton()
-        self.btn_preview.set_icon_name("text-x-generic")
+        self.btn_preview.set_icon_name("document-page-setup")
         self.btn_preview.set_label("Preview")
         self.btn_preview.set_tooltip_text(
             "Preview rendered markdown (read-only)")
@@ -447,6 +450,17 @@ class NotebookWindow(Gtk.Window):
         for tab in self._tabs:
             tab.apply_code_font(self.settings.code_font)
 
+    def _apply_preview_font(self):
+        """Apply the markdown-preview body font from settings to every tab."""
+        for tab in self._tabs:
+            tab.apply_preview_font(self.settings.preview_font)
+
+    def _apply_line_spacing(self):
+        """Apply editor and preview line spacing from settings to every tab."""
+        for tab in self._tabs:
+            tab.apply_editor_line_spacing(self.settings.editor_line_spacing)
+            tab.apply_preview_line_spacing(self.settings.preview_line_spacing)
+
     # ------------------------------------------------------- read-only -- #
     def _apply_read_only(self):
         """Reflect self.read_only across all tabs and the status bar."""
@@ -524,6 +538,9 @@ class NotebookWindow(Gtk.Window):
                         on_close=self._close_tab,
                         code_font=self.settings.code_font)
         tab.apply_font(self.settings.editor_font)
+        tab.apply_preview_font(self.settings.preview_font)
+        tab.apply_editor_line_spacing(self.settings.editor_line_spacing)
+        tab.apply_preview_line_spacing(self.settings.preview_line_spacing)
         tab.set_editable(not self.read_only)
         tab.set_preview(self.preview_mode)
         self._tabs.append(tab)
@@ -608,6 +625,12 @@ class NotebookWindow(Gtk.Window):
         self.statusbar.pop(self._status_ctx)
         self.statusbar.push(self._status_ctx, msg)
         self._update_slugify_sensitivity()
+        self._update_save_sensitivity()
+
+    def _update_save_sensitivity(self):
+        """(#4) Enable Save only when the active tab has unsaved changes."""
+        tab = self._active_tab()
+        self.btn_save.set_sensitive(bool(tab and tab.note and tab.dirty))
 
     def _update_slugify_sensitivity(self):
         """
@@ -670,6 +693,7 @@ class NotebookWindow(Gtk.Window):
         # An empty box means no filter.
         self.search_query = text or None
         self._reload_notelist()
+        self._apply_search_highlight()
 
     def on_search_icon_press(self, entry, icon_pos, _event):
         """Clear icon pressed: empty the box and drop the filter."""
@@ -677,6 +701,14 @@ class NotebookWindow(Gtk.Window):
             entry.set_text("")
             self.search_query = None
             self._reload_notelist()
+            self._apply_search_highlight()
+
+    def _apply_search_highlight(self):
+        """(#5) Highlight the current search term in the active tab's document.
+        A cleared search removes the highlight."""
+        tab = self._active_tab()
+        if tab is not None:
+            tab.highlight_search(self.search_query)
 
     def _reload_sidebar(self):
         self.sidebar_store.clear()
@@ -746,6 +778,7 @@ class NotebookWindow(Gtk.Window):
         if not tab.load_note(note):
             self._error_dialog(f"Could not open note:\n{note.path}")
             return
+        tab.highlight_search(self.search_query)
         self.update_status()
 
     def _load_note_in_new_tab(self, note):
@@ -753,6 +786,7 @@ class NotebookWindow(Gtk.Window):
         if not tab.load_note(note):
             self._error_dialog(f"Could not open note:\n{note.path}")
             return
+        tab.highlight_search(self.search_query)
         self.update_status()
 
     def _save_active(self):
@@ -852,9 +886,11 @@ class NotebookWindow(Gtk.Window):
         except GLib.Error as exc:
             self._error_dialog(f"Could not open file browser:\n{exc}")
 
-    def on_tab_switched(self, _notebook, _page, _page_num):
+    def on_tab_switched(self, _notebook, _page, page_num):
         # GTK fires this during construction too; guard via _tabs presence.
         if getattr(self, "_tabs", None):
+            if 0 <= page_num < len(self._tabs):
+                self._tabs[page_num].highlight_search(self.search_query)
             self.update_status()
 
     def on_new_tab(self, _widget):
@@ -964,6 +1000,8 @@ class NotebookWindow(Gtk.Window):
         """Re-theme tabs and toolbar after a preferences change."""
         self._apply_editor_font()
         self._apply_code_font()
+        self._apply_preview_font()
+        self._apply_line_spacing()
         self._apply_toolbar_style()
 
     def on_about(self, _widget):

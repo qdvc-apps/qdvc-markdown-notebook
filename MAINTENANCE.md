@@ -68,14 +68,17 @@ now uses the `NODE_*` kinds instead.)
 ### 3.0a `settings.py` — persistent user settings (no GTK)
 - Stores settings as YAML at `$XDG_CONFIG_HOME/qdvcmdnb/config.yml`, falling back
   to `~/.config/qdvcmdnb/config.yml`. Resolve via `config_dir()` / `config_path()`.
-- `Settings` holds `editor_font` and `code_font` (both Pango font-description
-  strings), `toolbar_style` (`"below"` or `"beside"`, the `TOOLBAR_TEXT_*`
-  constants), and `recent_folders` (most-recent-first list, capped at
-  `MAX_RECENT`). `editor_font` themes the whole editor; `code_font` is applied to
-  inline code and fenced code blocks only (see the highlighter); `toolbar_style`
-  controls whether toolbar button text sits below or beside the icon. Construct
-  via `Settings.load()`, which returns sane defaults on a missing/malformed file
-  or any read error — it never raises to the caller.
+- `Settings` holds `editor_font`, `code_font`, and `preview_font` (Pango
+  font-description strings), `editor_line_spacing` and `preview_line_spacing`
+  (ints, pixels of extra inter-line space, clamped to `[MIN_LINE_SPACING,
+  MAX_LINE_SPACING]` via `_coerce_spacing`), `toolbar_style` (`"below"` or
+  `"beside"`, the `TOOLBAR_TEXT_*` constants), and `recent_folders`
+  (most-recent-first list, capped at `MAX_RECENT`). `editor_font` themes the
+  editor; `code_font` themes inline/fenced code in both the editor (highlighter)
+  and the preview; `preview_font` is the preview body font; the two spacings apply
+  to the editor and preview views. Construct via `Settings.load()`, which returns
+  sane defaults on a missing/malformed file or any read error — it never raises to
+  the caller.
 - `save()` writes atomically (temp file + `os.replace`) and returns a bool.
 - `add_recent_folder()` dedups (moves existing to front), prunes directories that
   no longer exist, and caps the list.
@@ -110,17 +113,20 @@ now uses the `NODE_*` kinds instead.)
   and applies it immediately, so already-loaded text reflects the font.
 
 ### 3.1a `pango_markdown.py` — Markdown → Pango markup (no GTK)
-`render(text)` converts a Markdown subset to a Pango markup string for Preview
-mode (no WebKit). Pango markup is inline-only (`<b>`, `<i>`, `<tt>`, `<span>`,
-size/weight/foreground), so block structure is approximated: headings become
-sized+bold spans, lists get bullet/number prefixes with indentation, blockquotes
-a `\u2503` bar + italics, fenced/inline code monospace with a grey background,
+`render(text, code_font=None)` converts a Markdown subset to a Pango markup string
+for Preview mode (no WebKit). Pango markup is inline-only (`<b>`, `<i>`, `<tt>`,
+`<span>`, size/weight/foreground), so block structure is approximated: headings
+become sized+bold spans, lists get bullet/number prefixes with indentation,
+blockquotes a `\u2503` bar + italics, fenced/inline code with a grey background,
 horizontal rules a line of dashes, links the underlined coloured text (the URL is
-dropped — markup can't make clickable links). All text is XML-escaped first via
-`xml.sax.saxutils.escape`, and code spans/blocks are escaped but not further
-interpreted. The output is always well-formed markup. Pure text→text, no GTK, so
-it is unit-testable. Deliberately lightweight (same "good enough" philosophy as
-the highlighter), not a full CommonMark parser.
+dropped — markup can't make clickable links). When `code_font` (a Pango
+font-description string) is supplied, code spans/blocks use it via
+`<span font_desc=...>`; otherwise they fall back to `<tt>` (generic monospace).
+Attribute values are quote-escaped (`_attr_escape`) so a font name with an
+apostrophe can't break the markup. All text is XML-escaped first, and code is
+escaped but not further interpreted. The output is always well-formed markup. Pure
+text→text, no GTK, so it is unit-testable. Deliberately lightweight (same "good
+enough" philosophy as the highlighter), not a full CommonMark parser.
 
 ### 3.2 `model.py` — data layer (no GTK)
 - `Note` — a thin wrapper over a file path; caches `name` and `mtime`.
@@ -179,11 +185,22 @@ window. Each `EditorTab` owns its own `Gtk.TextView`, `Gtk.TextBuffer`,
   a programmatic load) and `on_close(tab)` (close button clicked).
 - API: `load_note(note)` → bool, `save()` → bool (both return False on I/O error
   and leave the dialog to the caller), `clear()`, `get_content()`,
-  `apply_font(str)`, `apply_code_font(str)`, `set_editable(bool)` (read-only mode;
-  toggles `TextView.set_editable`/`set_cursor_visible`), `set_preview(bool)`
-  (renders current content via `pango_markdown.render` into the preview buffer
-  with `insert_markup`, then switches the stack), `title_text()`. The constructor
-  takes `code_font` and forwards it to the highlighter.
+  `apply_font(str)`, `apply_code_font(str)` (also re-renders the preview if
+  active), `apply_preview_font(str)` (preview body font), `apply_editor_line_spacing(px)`
+  / `apply_preview_line_spacing(px)` (set `pixels_below_lines` + `pixels_inside_wrap`
+  on the editor/preview views), `set_editable(bool)` (read-only mode; toggles
+  `TextView.set_editable`/`set_cursor_visible`), `set_preview(bool)` (renders
+  current content via `pango_markdown.render(..., code_font=self._code_font)` into
+  the preview buffer with `insert_markup`, then switches the stack),
+  `highlight_search(query)` (see below), `title_text()`. The constructor takes
+  `code_font` and forwards it to the highlighter; the tab caches it for preview
+  rendering.
+- Search highlight (#5): a dedicated `search_match` tag (yellow `#fff176`
+  background) is created on the buffer. `highlight_search(query)` stores the query
+  and `_apply_search_highlight()` clears the tag then re-applies it to every
+  case-insensitive occurrence in the editor text; a blank/None query just clears.
+  It is re-applied after `load_note` and on every buffer change so the spans track
+  edits. The highlight is independent of the markdown highlighter's own tags.
 - Preview re-renders on `load_note` when already active; in preview the editor is
   hidden and content can't change, so no live re-render is needed while previewing.
 - The dirty marker is a leading `*` on the tab title, refreshed by
@@ -192,17 +209,17 @@ window. Each `EditorTab` owns its own `Gtk.TextView`, `Gtk.TextBuffer`,
   exactly as the single-editor version did — but now per tab.
 
 ### 3.2b `preferences.py` — `PreferencesDialog`
-A modal `Gtk.Dialog` (GNOME2/MATE idiom: "Preferences" under the **Edit** menu).
-Two sections: a Fonts frame with two `Gtk.FontButton`s (editor + code), and a
-Toolbar frame with a radio pair (text below vs beside icons). It has **Save** and
-**Cancel** buttons. Each control change applies **live** (mutates the shared
-`Settings` in memory and calls the window's `on_apply` to re-theme), but is *not*
-persisted until Save. The dialog snapshots the original values on open
-(`_original`); `run_modal()` runs the dialog and, on Save, calls
-`settings.save()`, while on Cancel/close it restores the snapshot and re-applies
-(reverting the live preview). The window calls `dialog.run_modal()` rather than
-just constructing it. This module replaced the former *View → Set Editor Font* /
-*Set Code Font* menu items.
+A modal `Gtk.Dialog` (GNOME2/MATE idiom: "Preferences" under the **Edit** menu)
+with a `Gtk.Notebook` of two tabs. **Fonts**: `Gtk.FontButton`s for editor font,
+code font, and markdown-preview font, plus two `Gtk.SpinButton`s for editor and
+preview line spacing (range `MIN_LINE_SPACING`..`MAX_LINE_SPACING`). **Interface**:
+a radio pair for toolbar text below vs beside icons. It has **Save** and **Cancel**
+buttons. Each control change applies **live** (mutates the shared `Settings` in
+memory and calls the window's `on_apply` to re-theme), but is *not* persisted until
+Save. The dialog snapshots all original values on open (`_original`); `run_modal()`
+runs the dialog and, on Save, calls `settings.save()`, while on Cancel/close it
+restores the snapshot (all six fields) and re-applies (reverting the live preview).
+The window calls `dialog.run_modal()` rather than just constructing it.
 
 ### 3.3 `window.py` — `NotebookWindow` (view + controller)
 The editor area is now a `Gtk.Notebook` of `EditorTab` pages; `self._tabs` is a
@@ -289,12 +306,14 @@ checks default on). `on_preferences` opens the `PreferencesDialog`; `on_about`
 shows a `Gtk.AboutDialog`.
 
 Settings wiring: `__init__` calls `Settings.load()`, then after `_build_ui()`
-calls `_apply_editor_font()`, `_apply_code_font()`, and `_rebuild_recent_menu()`.
-`open_folder()` calls `_remember_folder()` (which records, saves, and refreshes
-the recent-workspace menu). Font and toolbar-style changes now flow through the
-Preferences dialog, whose `on_apply` callback (`_apply_preferences`) re-applies
-the editor font, code font, and toolbar style to the live UI. `_apply_editor_font`
-and `_apply_code_font` iterate **all** tabs; `_apply_toolbar_style` maps
+calls `_apply_editor_font()`, `_apply_code_font()`, `_apply_preview_font()`,
+`_apply_line_spacing()`, and `_rebuild_recent_menu()`. `open_folder()` calls
+`_remember_folder()` (which records, saves, and refreshes the recent-workspace
+menu). Font, spacing, and toolbar-style changes flow through the Preferences
+dialog, whose `on_apply` callback (`_apply_preferences`) re-applies the editor
+font, code font, preview font, line spacings, and toolbar style to the live UI.
+`_apply_editor_font` / `_apply_code_font` / `_apply_preview_font` /
+`_apply_line_spacing` iterate **all** tabs; `_apply_toolbar_style` maps
 `settings.toolbar_style` to a `Gtk.ToolbarStyle` (`BOTH` = below, `BOTH_HORIZ` =
 beside) via `_toolbar_style_enum()`. `on_open_recent` opens a folder from the menu
 (handling the case where it has since been deleted).
@@ -317,12 +336,15 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
   All/Empty/subfolder reload the list; the Subfolders **parent** shows placeholders
   in both panes (`_show_notelist_placeholder` + `tab.clear()`).
 - Toolbar: built in `_build_toolbar`, style from `_toolbar_style_enum()`. Buttons:
-  New note, Save note, the **Read-only** toggle (`btn_readonly`, a
-  `Gtk.ToggleToolButton`, active by default), the **Preview** toggle
-  (`btn_preview`, off by default; locks the Read-only toggle while active), and
-  **Slugify** (`btn_slugify`). Slugify starts insensitive and is enabled/disabled
-  by `_update_slugify_sensitivity()` (called from `update_status`): enabled only in
-  edit mode when the active tab has a note whose live first line is a short H1.
+  New note, **Save note** (`btn_save`, `document-save`; starts insensitive and is
+  enabled only when the active tab is dirty — `_update_save_sensitivity()`, called
+  from `update_status`), the **Read-only** toggle (`btn_readonly`, a
+  `Gtk.ToggleToolButton`, active by default), the **Preview** toggle (`btn_preview`,
+  `document-page-setup` icon, off by default; locks the Read-only toggle while
+  active), and **Slugify** (`btn_slugify`). Slugify starts insensitive and is
+  enabled/disabled by `_update_slugify_sensitivity()` (called from `update_status`):
+  enabled only in edit mode when the active tab has a note whose live first line is
+  a short H1.
 - Note list (pane 2): a vertical box with a **search row** on top (a `Gtk.Entry`
   with a clear icon + a "Search" `Gtk.Button`) above a `Gtk.Stack`
   (`notelist_stack`). The stack has a "list" child (the scrolled
@@ -336,13 +358,18 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
   count. The filter persists across node switches and reloads until the box is
   cleared. (Content search reads every candidate file per search — fine for
   typical note collections; for very large trees, consider an index or a
-  background thread — see §7.)
+  background thread — see §7.) Beyond filtering the list, `on_search` /
+  `on_search_icon_press` call `_apply_search_highlight()`, which tells the active
+  tab to highlight the term (or clear it); the current query is also pushed to a
+  tab when a note loads into it and on tab switch, so the highlight follows.
 - Editor: a `Gtk.Notebook`; each page is an `EditorTab` (see §3.2a). `editor_font`
-  themes the whole view; `code_font` themes code spans via the highlighter tags.
-  Keep a single uniform size for body text — do not introduce size-varying tags.
+  themes the whole view; `code_font` themes code spans via the highlighter tags;
+  `preview_font` and the two line-spacings theme the preview/editor views. Keep a
+  single uniform size for body text — do not introduce size-varying tags.
 - Status bar (pane footer): a horizontal box with a bold `mode_label` (Read-only /
-  Edit mode) on the left and the regular `Gtk.Statusbar` filling the rest;
-  `update_status` sets both.
+  Edit mode, or "Rendered Markdown preview") on the left and the regular
+  `Gtk.Statusbar` filling the rest; `update_status` sets both and refreshes the
+  Save and Slugify button sensitivities.
 
 ## 4. Control flow
 

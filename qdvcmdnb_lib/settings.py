@@ -34,6 +34,14 @@ except ImportError:  # pragma: no cover - exercised only without PyYAML
 # Defaults that match the editor's previous hard-coded behaviour.
 DEFAULT_EDITOR_FONT = "monospace 11"
 DEFAULT_CODE_FONT = "monospace 11"
+DEFAULT_PREVIEW_FONT = "Sans 11"
+
+# Line spacing (pixels of extra space between display lines), applied to the
+# editor and the markdown preview respectively.
+DEFAULT_EDITOR_LINE_SPACING = 0
+DEFAULT_PREVIEW_LINE_SPACING = 4
+MIN_LINE_SPACING = 0
+MAX_LINE_SPACING = 40
 
 # Toolbar style: icon text beside vs below the icon.
 TOOLBAR_TEXT_BESIDE = "beside"
@@ -75,6 +83,15 @@ def _warn_no_yaml_once():
         _warned_no_yaml = True
 
 
+def _coerce_spacing(value, fallback):
+    """Validate a line-spacing value: an int clamped to [MIN, MAX]."""
+    if isinstance(value, bool):  # bool is an int subclass; reject it explicitly
+        return fallback
+    if isinstance(value, (int, float)):
+        return max(MIN_LINE_SPACING, min(MAX_LINE_SPACING, int(value)))
+    return fallback
+
+
 # --------------------------------------------------------------------------- #
 # Settings object
 # --------------------------------------------------------------------------- #
@@ -90,6 +107,9 @@ class Settings:
     def __init__(self):
         self.editor_font = DEFAULT_EDITOR_FONT
         self.code_font = DEFAULT_CODE_FONT
+        self.preview_font = DEFAULT_PREVIEW_FONT
+        self.editor_line_spacing = DEFAULT_EDITOR_LINE_SPACING
+        self.preview_line_spacing = DEFAULT_PREVIEW_LINE_SPACING
         self.toolbar_style = DEFAULT_TOOLBAR_STYLE
         self.recent_folders = []
         self._extra = {}  # forward-compatibility: unrecognised top-level keys
@@ -129,6 +149,15 @@ class Settings:
         if isinstance(code_font, str) and code_font.strip():
             self.code_font = code_font
 
+        preview_font = data.get("preview_font")
+        if isinstance(preview_font, str) and preview_font.strip():
+            self.preview_font = preview_font
+
+        self.editor_line_spacing = _coerce_spacing(
+            data.get("editor_line_spacing"), self.editor_line_spacing)
+        self.preview_line_spacing = _coerce_spacing(
+            data.get("preview_line_spacing"), self.preview_line_spacing)
+
         toolbar_style = data.get("toolbar_style")
         if toolbar_style in (TOOLBAR_TEXT_BESIDE, TOOLBAR_TEXT_BELOW):
             self.toolbar_style = toolbar_style
@@ -138,8 +167,9 @@ class Settings:
             self.recent_folders = [r for r in recents if isinstance(r, str)]
 
         # Preserve any keys we don't recognise (and our known ones are filtered).
-        known = {"version", "editor_font", "code_font", "toolbar_style",
-                 "recent_folders"}
+        known = {"version", "editor_font", "code_font", "preview_font",
+                 "editor_line_spacing", "preview_line_spacing",
+                 "toolbar_style", "recent_folders"}
         self._extra = {k: v for k, v in data.items() if k not in known}
 
     # ------------------------------------------------------------ saving -- #
@@ -148,6 +178,9 @@ class Settings:
             "version": SCHEMA_VERSION,
             "editor_font": self.editor_font,
             "code_font": self.code_font,
+            "preview_font": self.preview_font,
+            "editor_line_spacing": self.editor_line_spacing,
+            "preview_line_spacing": self.preview_line_spacing,
             "toolbar_style": self.toolbar_style,
             "recent_folders": list(self.recent_folders),
         }
@@ -180,6 +213,18 @@ class Settings:
     def set_code_font(self, font_str):
         if isinstance(font_str, str) and font_str.strip():
             self.code_font = font_str
+
+    def set_preview_font(self, font_str):
+        if isinstance(font_str, str) and font_str.strip():
+            self.preview_font = font_str
+
+    def set_editor_line_spacing(self, value):
+        self.editor_line_spacing = _coerce_spacing(value,
+                                                   self.editor_line_spacing)
+
+    def set_preview_line_spacing(self, value):
+        self.preview_line_spacing = _coerce_spacing(value,
+                                                    self.preview_line_spacing)
 
     def set_toolbar_style(self, style):
         if style in (TOOLBAR_TEXT_BESIDE, TOOLBAR_TEXT_BELOW):
