@@ -21,8 +21,8 @@ from .config import (
     SORT_DATE_OLD,
     ALL_NOTES,
 )
-from .highlighter import MarkdownHighlighter
 from .settings import Settings
+from .editortab import EditorTab
 
 
 class NotebookWindow(Gtk.Window):
@@ -34,13 +34,13 @@ class NotebookWindow(Gtk.Window):
         self.settings = Settings.load()
 
         self.root_folder = None
-        self.current_note = None          # Note currently open in editor
         self.current_subfolder = ALL_NOTES
         self.sort_mode = SORT_ALPHA
-        self._dirty = False
-        self._loading = False             # guard against spurious "changed"
+        self._note_select_guard = False   # suppress reselection feedback loops
 
         self._build_ui()
+        # Start with one empty tab.
+        self._new_tab(focus=False)
         self._apply_editor_font()
         self._rebuild_recent_menu()
 
@@ -77,6 +77,7 @@ class NotebookWindow(Gtk.Window):
         menubar = Gtk.MenuBar()
         accel = Gtk.AccelGroup()
         self.add_accel_group(accel)
+        self._accel_group = accel
 
         # ---- File menu ----
         file_menu = Gtk.Menu()
@@ -109,6 +110,22 @@ class NotebookWindow(Gtk.Window):
         self.recent_menu = Gtk.Menu()
         self.recent_menu_item.set_submenu(self.recent_menu)
         file_menu.append(self.recent_menu_item)
+
+        file_menu.append(Gtk.SeparatorMenuItem())
+
+        mi_new_tab = Gtk.MenuItem(label="New Tab")
+        mi_new_tab.add_accelerator("activate", accel, Gdk.KEY_t,
+                                   Gdk.ModifierType.CONTROL_MASK,
+                                   Gtk.AccelFlags.VISIBLE)
+        mi_new_tab.connect("activate", self.on_new_tab)
+        file_menu.append(mi_new_tab)
+
+        mi_close_tab = Gtk.MenuItem(label="Close Tab")
+        mi_close_tab.add_accelerator("activate", accel, Gdk.KEY_w,
+                                     Gdk.ModifierType.CONTROL_MASK,
+                                     Gtk.AccelFlags.VISIBLE)
+        mi_close_tab.connect("activate", self.on_close_tab)
+        file_menu.append(mi_close_tab)
 
         file_menu.append(Gtk.SeparatorMenuItem())
 
@@ -206,31 +223,23 @@ class NotebookWindow(Gtk.Window):
 
         self.note_view.get_selection().connect(
             "changed", self.on_note_selection_changed)
+        self.note_view.connect("button-press-event",
+                               self.on_notelist_button_press)
 
         scroll.add(self.note_view)
         return scroll
 
     def _build_editor(self):
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-
-        self.text_buffer = Gtk.TextBuffer()
-        self.text_view = Gtk.TextView(buffer=self.text_buffer)
-        self.text_view.set_monospace(True)
-        self.text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        self.text_view.set_left_margin(8)
-        self.text_view.set_right_margin(8)
-        self.text_view.set_top_margin(8)
-        self.text_view.set_bottom_margin(8)
-
-        # The actual font is applied by _apply_editor_font() from settings,
-        # called once after the UI is built and again when the user changes it.
-
-        self.highlighter = MarkdownHighlighter(self.text_buffer)
-        self.text_buffer.connect("changed", self.on_text_changed)
-
-        scroll.add(self.text_view)
-        return scroll
+        # The editor area is a Gtk.Notebook; each page is an EditorTab.
+        self.notebook = Gtk.Notebook()
+        self.notebook.set_scrollable(True)
+        self.notebook.set_show_border(False)
+        # The tab bar is hidden whenever there is a single tab (see
+        # _update_tabbar_visibility). show-tabs starts False for the initial tab.
+        self.notebook.set_show_tabs(False)
+        self.notebook.connect("switch-page", self.on_tab_switched)
+        self._tabs = []  # list[EditorTab], parallel to notebook pages
+        return self.notebook
 
     def _build_statusbar(self):
         self.statusbar = Gtk.Statusbar()
@@ -239,9 +248,51 @@ class NotebookWindow(Gtk.Window):
 
     # ----------------------------------------------------------- settings -- #
     def _apply_editor_font(self):
-        """Apply the editor font from settings to the TextView."""
-        font = Pango.FontDescription(self.settings.editor_font)
-        self.text_view.override_font(font)
+        """Apply the editor font from settings to every open tab."""
+        for tab in self._tabs:
+            tab.apply_font(self.settings.editor_font)
+
+    # --------------------------------------------------------------- tabs -- #
+    def _active_tab(self):
+        idx = self.notebook.get_current_page()
+        if idx < 0 or idx >= len(self._tabs):
+            return None
+        return self._tabs[idx]
+
+    def _new_tab(self, focus=True):
+        """Create, append, and (optionally) switch to a new empty tab."""
+        tab = EditorTab(on_changed=self._on_tab_changed,
+                        on_close=self._close_tab)
+        tab.apply_font(self.settings.editor_font)
+        self._tabs.append(tab)
+        idx = self.notebook.append_page(tab.widget, tab.tab_label)
+        self.notebook.set_tab_reorderable(tab.widget, True)
+        self._update_tabbar_visibility()
+        if focus:
+            self.notebook.set_current_page(idx)
+            tab.text_view.grab_focus()
+        self.update_status()
+        return tab
+
+    def _close_tab(self, tab):
+        """Close `tab`, prompting if it has unsaved changes. No-op if last tab."""
+        if len(self._tabs) <= 1:
+            return  # never close the final tab; tab bar is hidden anyway
+        if self._maybe_warn_unsaved(tab) is False:
+            return
+        idx = self._tabs.index(tab)
+        self.notebook.remove_page(idx)
+        self._tabs.pop(idx)
+        self._update_tabbar_visibility()
+        self.update_status()
+
+    def _update_tabbar_visibility(self):
+        """Show the tab bar only when more than one tab is open."""
+        self.notebook.set_show_tabs(len(self._tabs) > 1)
+
+    def _on_tab_changed(self, _tab):
+        """Called by a tab when its buffer is edited."""
+        self.update_status()
 
     def _rebuild_recent_menu(self):
         """Repopulate the File > Open Recent submenu from settings."""
@@ -269,13 +320,17 @@ class NotebookWindow(Gtk.Window):
     # -------------------------------------------------------- status bar -- #
     def update_status(self):
         count = len(self.note_store)
-        if self.current_note:
-            sel = self.current_note.display_name()
+        tab = self._active_tab()
+        if tab and tab.note:
+            sel = tab.note.display_name()
         else:
             sel = "none"
         msg = f"{count} item(s)  |  Selected: {sel}"
-        if self._dirty:
+        if tab and tab.dirty:
             msg += "  *"
+        if len(self._tabs) > 1:
+            msg += f"  |  Tab {self.notebook.get_current_page() + 1}" \
+                   f"/{len(self._tabs)}"
         self.statusbar.pop(self._status_ctx)
         self.statusbar.push(self._status_ctx, msg)
 
@@ -287,10 +342,11 @@ class NotebookWindow(Gtk.Window):
         self.root_folder = folder
         self.set_title(f"{APP_NAME} \u2014 {folder}")
         self.current_subfolder = ALL_NOTES
-        self.current_note = None
         self._reload_sidebar()
         self._reload_notelist()
-        self._clear_editor()
+        tab = self._active_tab()
+        if tab:
+            tab.clear()
         self.update_status()
         self._remember_folder(folder)
 
@@ -329,38 +385,29 @@ class NotebookWindow(Gtk.Window):
         self.update_status()
 
     # ----------------------------------------------------------- editor -- #
-    def _clear_editor(self):
-        self._loading = True
-        self.text_buffer.set_text("")
-        self._loading = False
-        self._dirty = False
-
-    def _load_note(self, note):
-        try:
-            content = model.read_note(note)
-        except (OSError, UnicodeDecodeError) as exc:
-            self._error_dialog(f"Could not open note:\n{exc}")
+    def _load_note_in_active_tab(self, note):
+        tab = self._active_tab()
+        if tab is None:
+            tab = self._new_tab(focus=True)
+        if not tab.load_note(note):
+            self._error_dialog(f"Could not open note:\n{note.path}")
             return
-        self._loading = True
-        self.text_buffer.set_text(content)
-        self._loading = False
-        self.current_note = note
-        self._dirty = False
-        self.highlighter.highlight()
         self.update_status()
 
-    def _save_current(self):
-        if not self.current_note:
+    def _load_note_in_new_tab(self, note):
+        tab = self._new_tab(focus=True)
+        if not tab.load_note(note):
+            self._error_dialog(f"Could not open note:\n{note.path}")
+            return
+        self.update_status()
+
+    def _save_active(self):
+        tab = self._active_tab()
+        if tab is None or not tab.note:
             return False
-        start = self.text_buffer.get_start_iter()
-        end = self.text_buffer.get_end_iter()
-        content = self.text_buffer.get_text(start, end, True)
-        try:
-            model.write_note(self.current_note, content)
-        except OSError as exc:
-            self._error_dialog(f"Could not save note:\n{exc}")
+        if not tab.save():
+            self._error_dialog(f"Could not save note:\n{tab.note.path}")
             return False
-        self._dirty = False
         self.update_status()
         return True
 
@@ -374,25 +421,56 @@ class NotebookWindow(Gtk.Window):
             self.current_subfolder = ALL_NOTES
         else:
             self.current_subfolder = model_[treeiter][1]
-        self.current_note = None
-        self._clear_editor()
         self._reload_notelist()
 
     def on_note_selection_changed(self, selection):
+        if self._note_select_guard:
+            return
         model_, treeiter = selection.get_selected()
         if treeiter is None:
             return
-        if self._maybe_warn_unsaved() is False:
+        # Default behaviour: open (replace) in the active tab.
+        tab = self._active_tab()
+        if tab and self._maybe_warn_unsaved(tab) is False:
+            # User cancelled; revert the selection to the tab's current note.
+            self._reselect_active_note()
             return
         path = model_[treeiter][1]
-        self._load_note(model.Note(path))
+        self._load_note_in_active_tab(model.Note(path))
 
-    def on_text_changed(self, _buffer):
-        if self._loading:
-            return
-        self._dirty = True
-        self.highlighter.highlight()
-        self.update_status()
+    def on_notelist_button_press(self, _widget, event):
+        # Right-click (button 3) opens the context menu on the row under it.
+        if event.button != 3:
+            return False
+        path_info = self.note_view.get_path_at_pos(int(event.x), int(event.y))
+        if path_info is None:
+            return False
+        path, _col, _cx, _cy = path_info
+        self.note_view.get_selection().select_path(path)
+        treeiter = self.note_store.get_iter(path)
+        note_path = self.note_store[treeiter][1]
+
+        menu = Gtk.Menu()
+        item = Gtk.MenuItem(label="Open in new tab")
+        item.connect("activate",
+                     lambda _i: self._load_note_in_new_tab(model.Note(note_path)))
+        menu.append(item)
+        menu.show_all()
+        menu.popup_at_pointer(event)
+        return True
+
+    def on_tab_switched(self, _notebook, _page, _page_num):
+        # GTK fires this during construction too; guard via _tabs presence.
+        if getattr(self, "_tabs", None):
+            self.update_status()
+
+    def on_new_tab(self, _widget):
+        self._new_tab(focus=True)
+
+    def on_close_tab(self, _widget):
+        tab = self._active_tab()
+        if tab is not None:
+            self._close_tab(tab)
 
     def on_new_note(self, _widget):
         if not self.root_folder:
@@ -410,11 +488,13 @@ class NotebookWindow(Gtk.Window):
             self._error_dialog(f"Could not create note:\n{exc}")
             return
         self._reload_notelist(select_path=path)
-        self._load_note(model.Note(path))
-        self.text_view.grab_focus()
+        self._load_note_in_active_tab(model.Note(path))
+        tab = self._active_tab()
+        if tab:
+            tab.text_view.grab_focus()
 
     def on_save_note(self, _widget):
-        self._save_current()
+        self._save_active()
 
     def on_open_folder(self, _widget):
         dialog = Gtk.FileChooserDialog(
@@ -445,7 +525,7 @@ class NotebookWindow(Gtk.Window):
             self.settings.save()
             self._rebuild_recent_menu()
             return
-        if self._maybe_warn_unsaved() is False:
+        if self._maybe_warn_unsaved(self._active_tab()) is False:
             return
         self.open_folder(folder)
 
@@ -465,33 +545,62 @@ class NotebookWindow(Gtk.Window):
     def on_sort_changed(self, widget, mode):
         if widget.get_active():
             self.sort_mode = mode
-            keep = self.current_note.path if self.current_note else None
+            tab = self._active_tab()
+            keep = tab.note.path if (tab and tab.note) else None
             self._reload_notelist(select_path=keep)
 
+    def _reselect_active_note(self):
+        """
+        After a cancelled note switch, restore the list selection to whatever
+        the active tab currently holds (or clear it). Guarded so the
+        selection-changed handler does not re-trigger a load.
+        """
+        tab = self._active_tab()
+        target = tab.note.path if (tab and tab.note) else None
+        self._note_select_guard = True
+        try:
+            sel = self.note_view.get_selection()
+            sel.unselect_all()
+            if target:
+                for row in self.note_store:
+                    if row[1] == target:
+                        sel.select_iter(row.iter)
+                        break
+        finally:
+            self._note_select_guard = False
+
     def on_quit(self, _widget):
-        if self._maybe_warn_unsaved() is False:
+        if self._confirm_close_all() is False:
             return
         Gtk.main_quit()
 
     def _on_delete_event(self, _widget, _event):
-        if self._maybe_warn_unsaved() is False:
+        if self._confirm_close_all() is False:
             return True  # cancel close
         return False
 
+    def _confirm_close_all(self):
+        """Prompt for every dirty tab before quitting. False cancels the quit."""
+        for tab in list(self._tabs):
+            if self._maybe_warn_unsaved(tab) is False:
+                return False
+        return True
+
     # ---------------------------------------------------------- dialogs -- #
-    def _maybe_warn_unsaved(self):
+    def _maybe_warn_unsaved(self, tab):
         """
-        If there are unsaved changes, ask the user. Returns False if the
-        pending action should be cancelled, True otherwise.
+        If `tab` has unsaved changes, ask the user. Returns False if the pending
+        action should be cancelled, True otherwise. A None tab is treated as
+        clean (nothing to lose).
         """
-        if not self._dirty or not self.current_note:
+        if tab is None or not tab.dirty or not tab.note:
             return True
         dialog = Gtk.MessageDialog(
             transient_for=self,
             modal=True,
             message_type=Gtk.MessageType.QUESTION,
             buttons=Gtk.ButtonsType.NONE,
-            text="Save changes to the current note?",
+            text=f"Save changes to \u201c{tab.note.display_name()}\u201d?",
         )
         dialog.add_buttons(
             "Discard", Gtk.ResponseType.NO,
@@ -501,10 +610,10 @@ class NotebookWindow(Gtk.Window):
         resp = dialog.run()
         dialog.destroy()
         if resp == Gtk.ResponseType.YES:
-            self._save_current()
+            tab.save()
             return True
         if resp == Gtk.ResponseType.NO:
-            self._dirty = False
+            tab.dirty = False
             return True
         return False  # cancelled
 

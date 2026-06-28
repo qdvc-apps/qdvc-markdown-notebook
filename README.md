@@ -39,6 +39,16 @@ Persistent settings live in a plain, git-trackable YAML file at
 - **Editor font** — set via *View → Set Editor Font…*
 - **Recent working folders** — reopen them from *File → Open Recent*
 
+## Tabs
+
+Open notes across multiple tabs:
+
+- **Single-click** a note — opens it in the current tab (replacing its content).
+- **Right-click** a note → *Open in new tab*.
+- **Ctrl+T** — new empty tab. **Ctrl+W** — close the current tab (also the little
+  × on each tab).
+- With only one tab open, the tab bar is hidden.
+
 ## Keyboard shortcuts
 
 | Action               | Shortcut |
@@ -46,6 +56,8 @@ Persistent settings live in a plain, git-trackable YAML file at
 | New note             | Ctrl+N   |
 | Save note            | Ctrl+S   |
 | Open working folder  | Ctrl+O   |
+| New tab              | Ctrl+T   |
+| Close tab            | Ctrl+W   |
 | Quit                 | Ctrl+Q   |
 
 See [MAINTENANCE.md](MAINTENANCE.md) for architecture and maintainer notes.

@@ -20,6 +20,7 @@ qdvcmdnb_lib/
     settings.py                  # persistent user settings: YAML under ~/.config (no GTK)
     model.py                     # data layer: Note + filesystem + disk I/O (no GTK)
     highlighter.py               # MarkdownHighlighter (GTK TextBuffer tagging)
+    editortab.py                 # EditorTab: one tab's editor widget + state
     window.py                    # NotebookWindow: view + controller
 ```
 
@@ -111,27 +112,65 @@ from anywhere. `ALL_NOTES` is an `object()`; compare with `is`, never `==`.
   and shows the error dialog. `write_note` refreshes the note's `mtime`. Writes
   are not atomic (see §6).
 
+### 3.2a `editortab.py` — `EditorTab`
+Encapsulates one tab's editor state, which previously lived directly on the
+window. Each `EditorTab` owns its own `Gtk.TextView`, `Gtk.TextBuffer`,
+`MarkdownHighlighter`, the `note` open in it (or `None`), and per-tab `dirty` /
+`_loading` flags.
+- `widget` — the page widget added to the `Gtk.Notebook` (a `ScrolledWindow`).
+- `tab_label` — a horizontal box: an ellipsized title label + a borderless
+  close button (Caja-style, `window-close` icon at `MENU` size).
+- Callbacks passed in by the window: `on_changed(tab)` (buffer edited, not during
+  a programmatic load) and `on_close(tab)` (close button clicked).
+- API: `load_note(note)` → bool, `save()` → bool (both return False on I/O error
+  and leave the dialog to the caller), `clear()`, `get_content()`,
+  `apply_font(str)`, `title_text()`.
+- The dirty marker is a leading `*` on the tab title, refreshed by
+  `_refresh_title()`.
+- `_loading` guards the buffer `changed` signal during programmatic text sets,
+  exactly as the single-editor version did — but now per tab.
+
 ### 3.3 `window.py` — `NotebookWindow` (view + controller)
+The editor area is now a `Gtk.Notebook` of `EditorTab` pages; `self._tabs` is a
+list kept parallel to the notebook pages. Most editor operations delegate to the
+**active tab** via `_active_tab()`.
+
 Key state attributes:
 - `root_folder` — absolute path of the open data folder, or `None`.
 - `current_subfolder` — either the sentinel `ALL_NOTES` or a subfolder **name**
   (relative to `root_folder`).
-- `current_note` — the `Note` open in the editor, or `None`.
+- `_tabs` — list of `EditorTab`, parallel to notebook pages.
 - `sort_mode` — one of `SORT_ALPHA`, `SORT_DATE_NEW`, `SORT_DATE_OLD`.
-- `_dirty` — unsaved-changes flag.
-- `_loading` — guard set while programmatically setting buffer text so the
-  `changed` handler doesn't mark the buffer dirty or re-highlight spuriously.
+- `_note_select_guard` — suppresses the note-list `changed` handler while the
+  window programmatically restores a selection (used by `_reselect_active_note`
+  after a cancelled note switch), preventing a reload feedback loop.
 - `settings` — the loaded `Settings` instance (see §3.0a).
+
+Per-tab dirty/loading/note state lives on each `EditorTab`, not on the window.
+
+Tab wiring:
+- `_new_tab(focus)` builds an `EditorTab`, applies the font, appends it to the
+  notebook and `_tabs`, updates tab-bar visibility, and optionally switches to it.
+- `_close_tab(tab)` is a **no-op when only one tab remains** (per spec). Otherwise
+  it prompts via `_maybe_warn_unsaved(tab)` then removes the page and list entry.
+- `_update_tabbar_visibility()` calls `notebook.set_show_tabs(len(_tabs) > 1)`,
+  which is what makes the whole tab bar vanish at one tab.
+- `_active_tab()` maps the notebook's current page index to `_tabs`.
+- Ctrl+T → `on_new_tab`; Ctrl+W → `on_close_tab` (both also menu items under
+  File). Right-click in the note list → `on_notelist_button_press` builds a
+  one-item popup ("Open in new tab") via `_load_note_in_new_tab`.
+- Quitting/closing the window runs `_confirm_close_all`, which prompts for *every*
+  dirty tab before exit.
 
 Settings wiring: `__init__` calls `Settings.load()`, then after `_build_ui()`
 calls `_apply_editor_font()` and `_rebuild_recent_menu()`. `open_folder()` calls
 `_remember_folder()` (which records, saves, and refreshes the Open Recent menu).
 `on_choose_font` uses a `Gtk.FontChooserDialog`, persists the choice, and
-re-applies it; `on_open_recent` opens a folder from the menu (handling the case
-where it has since been deleted). The editor font is applied **only** via
-`_apply_editor_font()` so there is one source of truth.
+re-applies it to **all** tabs; `on_open_recent` opens a folder from the menu
+(handling the case where it has since been deleted). The editor font is applied
+**only** via `_apply_editor_font()` so there is one source of truth.
 
-Note: inside the two selection handlers the local variable for the GTK model is
+Note: inside the selection handlers the local variable for the GTK model is
 named `model_` (trailing underscore) to avoid shadowing the imported `model`
 module.
 
@@ -141,24 +180,33 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
   then statusbar. Pane positions set with `set_position`.
 - Sidebar: `Gtk.TreeStore(str, str, bool)` = (label, subfolder-name, is_all).
 - Note list: `Gtk.ListStore(str, str, float)` = (display name, full path, mtime).
-- Editor: `Gtk.TextView` with `set_monospace(True)`. The font is applied by
-  `_apply_editor_font()` from `settings.editor_font` (a Pango font-description
-  string), not hard-coded. Keep it a single uniform size — do not introduce
-  size-varying tags; the spec forbids it.
+- Editor: a `Gtk.Notebook`; each page is an `EditorTab` (see §3.2a). The font is
+  applied per tab from `settings.editor_font`, not hard-coded. Keep it a single
+  uniform size — do not introduce size-varying tags; the spec forbids it.
 
 ## 4. Control flow
 
 - Selecting a sidebar row → `on_sidebar_selection_changed` sets
-  `current_subfolder`, clears editor, reloads the note list.
-- Selecting a note → `on_note_selection_changed` checks for unsaved changes,
-  then `_load_note` reads the file and highlights it.
-- Typing → `on_text_changed` sets `_dirty`, re-highlights, updates status.
-- New note → `on_new_note` writes an empty file into the current subfolder
-  (or root if All Notes is selected), via `_unique_note_path` to avoid clobber,
-  reloads the list, selects and opens the new file.
-- Save → `_save_current` writes the buffer to `current_note.path`.
-- Sort change → `on_sort_changed` reloads the list, attempting to keep the
-  current note selected by path.
+  `current_subfolder` and reloads the note list. (It no longer clears the editor;
+  tabs keep their own content.)
+- Selecting a note (single click) → `on_note_selection_changed` checks the active
+  tab for unsaved changes (cancelling restores the prior selection via
+  `_reselect_active_note`), then `_load_note_in_active_tab` **replaces** the
+  active tab's content.
+- Right-click a note → `on_notelist_button_press` → "Open in new tab" →
+  `_load_note_in_new_tab`.
+- Typing → the tab's own `_buffer_changed` sets its `dirty` flag, re-highlights,
+  updates the tab title, and calls back to the window to refresh the status bar.
+- New note → `on_new_note` writes an empty file into the current subfolder (or
+  root if All Notes is selected) via `model.create_empty_note`, reloads the list,
+  and opens it in the active tab.
+- New tab (Ctrl+T) → `on_new_tab` → `_new_tab(focus=True)`.
+- Close tab (Ctrl+W / close button) → `on_close_tab` / the tab's close callback →
+  `_close_tab`, a no-op at one tab.
+- Save → `_save_active` writes the active tab's content to its note.
+- Sort change → `on_sort_changed` reloads the list, keeping the active tab's note
+  selected by path.
+- Quit / window close → `_confirm_close_all` prompts for each dirty tab.
 
 ## 5. Known deviations from the original spec
 
