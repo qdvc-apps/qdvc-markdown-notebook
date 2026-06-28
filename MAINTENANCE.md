@@ -163,17 +163,41 @@ window. Each `EditorTab` owns its own `Gtk.TextView`, `Gtk.TextBuffer`,
 
 ### 3.2b `preferences.py` — `PreferencesDialog`
 A modal `Gtk.Dialog` (GNOME2/MATE idiom: "Preferences" under the **Edit** menu).
-It mutates and `save()`s the passed-in `Settings`, then calls the window's
-`on_apply` callback so changes apply live. Two sections: a Fonts frame with two
-`Gtk.FontButton`s (editor + code), and a Toolbar frame with a radio pair
-(text below vs beside icons). Each control persists and re-applies immediately on
-change — there is no separate Apply/OK step beyond Close. This module replaced the
-former *View → Set Editor Font* / *Set Code Font* menu items.
+Two sections: a Fonts frame with two `Gtk.FontButton`s (editor + code), and a
+Toolbar frame with a radio pair (text below vs beside icons). It has **Save** and
+**Cancel** buttons. Each control change applies **live** (mutates the shared
+`Settings` in memory and calls the window's `on_apply` to re-theme), but is *not*
+persisted until Save. The dialog snapshots the original values on open
+(`_original`); `run_modal()` runs the dialog and, on Save, calls
+`settings.save()`, while on Cancel/close it restores the snapshot and re-applies
+(reverting the live preview). The window calls `dialog.run_modal()` rather than
+just constructing it. This module replaced the former *View → Set Editor Font* /
+*Set Code Font* menu items.
 
 ### 3.3 `window.py` — `NotebookWindow` (view + controller)
 The editor area is now a `Gtk.Notebook` of `EditorTab` pages; `self._tabs` is a
 list kept parallel to the notebook pages. Most editor operations delegate to the
 **active tab** via `_active_tab()`.
+
+On startup the window centers itself (`set_position(CENTER)`) and sets its icon
+name to `accessories-text-editor`; the entry point also calls
+`Gtk.Window.set_default_icon_name(...)` and `GLib.set_prgname(...)` so the
+panel/taskbar can match the window to the `.desktop` file (its `StartupWMClass`).
+
+Menu items use `_icon_menu_item(label, icon_name)`, which builds a
+`Gtk.ImageMenuItem` (deprecated in GTK3 but the idiomatic MATE-era way to show
+icons in menus; it falls back to a plain `MenuItem`). Icons are stock freedesktop
+names: New=`document-new`, Save=`document-save`, Open Working Folder=`folder-open`,
+Open Recent=`document-open-recent`, New Tab=`tab-new`, Quit=`application-exit`,
+Preferences=`preferences-system`, About=`help-about`. Plain items (Close Tab, the
+sort radio items) intentionally have no icon, per HIG restraint.
+
+Tab navigation (`_on_key_press`, connected to the window's `key-press-event`):
+Ctrl+Tab → `_cycle_tab(forward=True)`, Ctrl+Shift+Tab → backward (GTK sends
+`ISO_Left_Tab` for shifted Tab, which is handled), and Alt+1..9 → `_goto_tab`.
+Both helpers wrap/clamp safely and no-op when the index is out of range. These use
+a raw key handler rather than accelerators because Tab is otherwise consumed by
+focus navigation.
 
 Key state attributes:
 - `root_folder` — absolute path of the open data folder, or `None`.
@@ -266,16 +290,19 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
   root if All Notes is selected) via `model.create_empty_note`, reloads the list,
   and opens it in the active tab.
 - Slugify → `on_slugify` reads the active tab's live content, derives a slug from
-  its H1, renames via `model.rename_note`, and refreshes title + list. The button
-  is only sensitive when those conditions hold (see §3.3 toolbar).
+  its H1, **confirms via `_confirm`** (an OK/Cancel `MessageDialog`), then renames
+  via `model.rename_note` and refreshes title + list. The button is only sensitive
+  when those conditions hold (see §3.3 toolbar).
 - New tab (Ctrl+T) → `on_new_tab` → `_new_tab(focus=True)`.
+- Switch tabs → Ctrl+Tab / Ctrl+Shift+Tab cycle; Alt+1..9 jump (via
+  `_on_key_press`).
 - Close tab (Ctrl+W / close button) → `on_close_tab` / the tab's close callback →
   `_close_tab`, a no-op at one tab.
 - Save → `_save_active` writes the active tab's content to its note.
 - Sort change → `on_sort_changed` reloads the list, keeping the active tab's note
   selected by path.
-- Preferences → `on_preferences` opens the dialog; its `on_apply` callback
-  (`_apply_preferences`) re-themes fonts and toolbar live.
+- Preferences → `on_preferences` opens the dialog and calls `run_modal`; live
+  changes preview via `_apply_preferences`, Save persists, Cancel reverts.
 - About → `on_about` shows a `Gtk.AboutDialog`.
 - Quit / window close → `_confirm_close_all` prompts for each dirty tab.
 

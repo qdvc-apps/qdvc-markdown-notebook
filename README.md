@@ -51,6 +51,7 @@ Terminal=false
 Categories=Office;Utility;TextEditor;
 MimeType=text/markdown;
 StartupNotify=true
+StartupWMClass=qdvc-markdown-notebook
 ```
 
 Notes:
@@ -63,6 +64,11 @@ Notes:
   typical GNOME/MATE install (it's the generic text-editor icon, the same family
   Pluma uses). To use your own icon instead, point `Icon=` at an absolute path to
   a `.png` or `.svg`.
+- `StartupWMClass=qdvc-markdown-notebook` lets the panel/taskbar match the running
+  window to this entry, so it shows the app icon instead of a generic window icon.
+  The app sets its program name to `qdvc-markdown-notebook` to match; the app also
+  sets its window icon to `accessories-text-editor` directly, so the icon appears
+  even before any `.desktop` matching.
 
 Then refresh the menu database (often automatic):
 
@@ -95,6 +101,8 @@ Open notes across multiple tabs:
   *Show in file browser*.
 - **Ctrl+T** — new empty tab. **Ctrl+W** — close the current tab (also the little
   × on each tab).
+- **Ctrl+Tab** / **Ctrl+Shift+Tab** cycle forward/backward through tabs;
+  **Alt+1**…**Alt+9** jump straight to a tab.
 - Tabs are titled with the note name (truncated past 12 characters).
 - With only one tab open, the tab bar is hidden.
 - A tab with no note shows a placeholder prompting you to select one.
@@ -103,19 +111,22 @@ Open notes across multiple tabs:
 
 The toolbar's **Slugify** button renames the current note from its title. It is
 enabled only when the note's first line is a level-1 heading (`# …`) shorter than
-32 characters. Clicking it renames the file to a lowercase, dash-separated slug —
-e.g. a note titled `# My awesome new note!` becomes `my-awesome-new-note.md`.
+32 characters. Clicking it asks for confirmation, then renames the file to a
+lowercase, dash-separated slug — e.g. a note titled `# My awesome new note!`
+becomes `my-awesome-new-note.md`.
 
 ## Keyboard shortcuts
 
-| Action               | Shortcut |
-| -------------------- | -------- |
-| New note             | Ctrl+N   |
-| Save note            | Ctrl+S   |
-| Open working folder  | Ctrl+O   |
-| New tab              | Ctrl+T   |
-| Close tab            | Ctrl+W   |
-| Quit                 | Ctrl+Q   |
+| Action                | Shortcut          |
+| --------------------- | ----------------- |
+| New note              | Ctrl+N            |
+| Save note             | Ctrl+S            |
+| Open working folder   | Ctrl+O            |
+| New tab               | Ctrl+T            |
+| Close tab             | Ctrl+W            |
+| Next / previous tab   | Ctrl+Tab / Ctrl+Shift+Tab |
+| Jump to tab 1–9       | Alt+1 … Alt+9     |
+| Quit                  | Ctrl+Q            |
 
 There's also *Help → About* for version and project information.
 

@@ -18,12 +18,22 @@ import sys
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk  # noqa: E402
+from gi.repository import Gtk, GLib  # noqa: E402
 
 from qdvcmdnb_lib.window import NotebookWindow
 
 
 def main():
+    # Help the window manager associate our windows with the .desktop file by
+    # giving the process a stable program name → WM_CLASS (#5). The .desktop
+    # file should set "StartupWMClass=qdvc-markdown-notebook" to match.
+    GLib.set_prgname("qdvc-markdown-notebook")
+
+    # Set the default icon for all windows/dialogs so the panel/taskbar shows
+    # the app icon rather than the generic window icon. This matches the Icon=
+    # line in the .desktop file.
+    Gtk.Window.set_default_icon_name("accessories-text-editor")
+
     root = sys.argv[1] if len(sys.argv) > 1 else None
     win = NotebookWindow(root_folder=root)
     win.show_all()

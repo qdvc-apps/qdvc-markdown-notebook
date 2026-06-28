@@ -5,8 +5,10 @@ In the GNOME2 / MATE idiom this is "Preferences" (under the Edit menu). It lets
 the user pick the editor font, the code font, and whether toolbar buttons show
 their text beside or below the icon.
 
-The dialog mutates and saves the passed-in Settings object, then invokes an
-`on_apply` callback so the window can re-theme its tabs and toolbar live.
+Behaviour: changes preview live in the editor while the dialog is open. The
+dialog has Save and Cancel buttons — Save persists the settings to disk; Cancel
+(or closing the window) restores the values that were in effect when the dialog
+opened and re-applies them, discarding the preview.
 """
 
 import gi
@@ -24,13 +26,22 @@ class PreferencesDialog(Gtk.Dialog):
         self.settings = settings
         self._on_apply = on_apply
 
-        self.add_button("_Close", Gtk.ResponseType.CLOSE)
+        # Snapshot the values in effect when the dialog opened, so Cancel can
+        # restore them (and revert the live preview).
+        self._original = {
+            "editor_font": settings.editor_font,
+            "code_font": settings.code_font,
+            "toolbar_style": settings.toolbar_style,
+        }
+
+        self.add_button("_Cancel", Gtk.ResponseType.CANCEL)
+        self.add_button("_Save", Gtk.ResponseType.OK)
+        self.set_default_response(Gtk.ResponseType.OK)
         self.set_default_size(420, -1)
 
         content = self.get_content_area()
         content.set_spacing(12)
         content.set_border_width(12)
-
         content.add(self._build_fonts_section())
         content.add(self._build_toolbar_section())
 
@@ -60,13 +71,12 @@ class PreferencesDialog(Gtk.Dialog):
         return frame
 
     def _on_editor_font_set(self, btn):
+        # Live preview only — not persisted until Save.
         self.settings.set_editor_font(btn.get_font())
-        self.settings.save()
         self._on_apply()
 
     def _on_code_font_set(self, btn):
         self.settings.set_code_font(btn.get_font())
-        self.settings.save()
         self._on_apply()
 
     # ---------------------------------------------------------- toolbar -- #
@@ -101,8 +111,25 @@ class PreferencesDialog(Gtk.Dialog):
         style = (TOOLBAR_TEXT_BESIDE if self._radio_beside.get_active()
                  else TOOLBAR_TEXT_BELOW)
         self.settings.set_toolbar_style(style)
-        self.settings.save()
         self._on_apply()
+
+    # ------------------------------------------------------- run/commit -- #
+    def run_modal(self):
+        """
+        Show the dialog and handle Save/Cancel. On Save: persist to disk. On
+        Cancel or window-close: restore the original values and re-apply (revert
+        the preview). Either way the dialog is destroyed before returning.
+        """
+        response = self.run()
+        if response == Gtk.ResponseType.OK:
+            self.settings.save()
+        else:
+            # Restore snapshot and revert the live preview.
+            self.settings.set_editor_font(self._original["editor_font"])
+            self.settings.set_code_font(self._original["code_font"])
+            self.settings.set_toolbar_style(self._original["toolbar_style"])
+            self._on_apply()
+        self.destroy()
 
     # ----------------------------------------------------------- helper -- #
     @staticmethod

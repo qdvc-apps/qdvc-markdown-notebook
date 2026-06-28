@@ -31,6 +31,11 @@ class NotebookWindow(Gtk.Window):
     def __init__(self, root_folder=None):
         super().__init__(title=APP_NAME)
         self.set_default_size(1000, 640)
+        # Center on screen at startup (#1) rather than the WM's default corner.
+        self.set_position(Gtk.WindowPosition.CENTER)
+        # Window/panel icon (#5). Use the same stock icon named in the .desktop
+        # file so the panel/taskbar shows it instead of the generic window icon.
+        self.set_icon_name("accessories-text-editor")
 
         self.settings = Settings.load()
 
@@ -51,6 +56,7 @@ class NotebookWindow(Gtk.Window):
 
         self.connect("destroy", Gtk.main_quit)
         self.connect("delete-event", self._on_delete_event)
+        self.connect("key-press-event", self._on_key_press)
 
     # ----------------------------------------------------------------- UI -- #
     def _build_ui(self):
@@ -86,21 +92,21 @@ class NotebookWindow(Gtk.Window):
         file_item = Gtk.MenuItem(label="File")
         file_item.set_submenu(file_menu)
 
-        mi_new = Gtk.MenuItem(label="New")
+        mi_new = self._icon_menu_item("New", "document-new")
         mi_new.add_accelerator("activate", accel, Gdk.KEY_n,
                                Gdk.ModifierType.CONTROL_MASK,
                                Gtk.AccelFlags.VISIBLE)
         mi_new.connect("activate", self.on_new_note)
         file_menu.append(mi_new)
 
-        mi_save = Gtk.MenuItem(label="Save")
+        mi_save = self._icon_menu_item("Save", "document-save")
         mi_save.add_accelerator("activate", accel, Gdk.KEY_s,
                                 Gdk.ModifierType.CONTROL_MASK,
                                 Gtk.AccelFlags.VISIBLE)
         mi_save.connect("activate", self.on_save_note)
         file_menu.append(mi_save)
 
-        mi_open = Gtk.MenuItem(label="Open Working Folder")
+        mi_open = self._icon_menu_item("Open Working Folder", "folder-open")
         mi_open.add_accelerator("activate", accel, Gdk.KEY_o,
                                 Gdk.ModifierType.CONTROL_MASK,
                                 Gtk.AccelFlags.VISIBLE)
@@ -108,14 +114,15 @@ class NotebookWindow(Gtk.Window):
         file_menu.append(mi_open)
 
         # "Open Recent" submenu, populated dynamically from settings.
-        self.recent_menu_item = Gtk.MenuItem(label="Open Recent")
+        self.recent_menu_item = self._icon_menu_item(
+            "Open Recent", "document-open-recent")
         self.recent_menu = Gtk.Menu()
         self.recent_menu_item.set_submenu(self.recent_menu)
         file_menu.append(self.recent_menu_item)
 
         file_menu.append(Gtk.SeparatorMenuItem())
 
-        mi_new_tab = Gtk.MenuItem(label="New Tab")
+        mi_new_tab = self._icon_menu_item("New Tab", "tab-new")
         mi_new_tab.add_accelerator("activate", accel, Gdk.KEY_t,
                                    Gdk.ModifierType.CONTROL_MASK,
                                    Gtk.AccelFlags.VISIBLE)
@@ -131,7 +138,7 @@ class NotebookWindow(Gtk.Window):
 
         file_menu.append(Gtk.SeparatorMenuItem())
 
-        mi_quit = Gtk.MenuItem(label="Quit")
+        mi_quit = self._icon_menu_item("Quit", "application-exit")
         # Note: the spec listed Ctrl+S for Quit; that collides with Save,
         # so Quit is bound to the conventional Ctrl+Q instead. See MAINTENANCE.md.
         mi_quit.add_accelerator("activate", accel, Gdk.KEY_q,
@@ -169,7 +176,7 @@ class NotebookWindow(Gtk.Window):
         edit_item = Gtk.MenuItem(label="Edit")
         edit_item.set_submenu(edit_menu)
 
-        mi_prefs = Gtk.MenuItem(label="Preferences\u2026")
+        mi_prefs = self._icon_menu_item("Preferences\u2026", "preferences-system")
         mi_prefs.connect("activate", self.on_preferences)
         edit_menu.append(mi_prefs)
 
@@ -180,12 +187,30 @@ class NotebookWindow(Gtk.Window):
         help_item = Gtk.MenuItem(label="Help")
         help_item.set_submenu(help_menu)
 
-        mi_about = Gtk.MenuItem(label="About")
+        mi_about = self._icon_menu_item("About", "help-about")
         mi_about.connect("activate", self.on_about)
         help_menu.append(mi_about)
 
         menubar.append(help_item)
         return menubar
+
+    @staticmethod
+    def _icon_menu_item(label, icon_name):
+        """
+        Build a menu item with a leading icon, GNOME2/MATE style.
+
+        Uses Gtk.ImageMenuItem (deprecated in GTK3 but the idiomatic way to get
+        icons in menus, and a good fit for this app's MATE-era look). Falls back
+        to a plain MenuItem if ImageMenuItem is unavailable.
+        """
+        try:
+            item = Gtk.ImageMenuItem(label=label)
+            img = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU)
+            item.set_image(img)
+            item.set_always_show_image(True)
+            return item
+        except (AttributeError, TypeError):
+            return Gtk.MenuItem(label=label)
 
     def _toolbar_style_enum(self):
         from .settings import TOOLBAR_TEXT_BESIDE
@@ -306,6 +331,45 @@ class NotebookWindow(Gtk.Window):
         if idx < 0 or idx >= len(self._tabs):
             return None
         return self._tabs[idx]
+
+    def _cycle_tab(self, forward=True):
+        """Move to the next/previous tab, wrapping around."""
+        n = len(self._tabs)
+        if n <= 1:
+            return
+        cur = self.notebook.get_current_page()
+        nxt = (cur + 1) % n if forward else (cur - 1) % n
+        self.notebook.set_current_page(nxt)
+
+    def _goto_tab(self, index):
+        """Jump to tab `index` (0-based) if it exists."""
+        if 0 <= index < len(self._tabs):
+            self.notebook.set_current_page(index)
+
+    def _on_key_press(self, _widget, event):
+        """
+        Tab navigation (#6):
+          Ctrl+Tab           -> next tab
+          Ctrl+Shift+Tab     -> previous tab
+          Alt+1 .. Alt+9     -> jump to that tab
+        Returns True to stop further handling when we act.
+        """
+        ctrl = bool(event.state & Gdk.ModifierType.CONTROL_MASK)
+        shift = bool(event.state & Gdk.ModifierType.SHIFT_MASK)
+        alt = bool(event.state & Gdk.ModifierType.MOD1_MASK)
+        keyval = event.keyval
+
+        # Ctrl+Tab / Ctrl+Shift+Tab. GTK also emits ISO_Left_Tab for shifted Tab.
+        if ctrl and keyval in (Gdk.KEY_Tab, Gdk.KEY_ISO_Left_Tab):
+            self._cycle_tab(forward=not shift)
+            return True
+
+        # Alt+1 .. Alt+9 -> tab 0..8.
+        if alt and Gdk.KEY_1 <= keyval <= Gdk.KEY_9:
+            self._goto_tab(keyval - Gdk.KEY_1)
+            return True
+
+        return False
 
     def _new_tab(self, focus=True):
         """Create, append, and (optionally) switch to a new empty tab."""
@@ -598,6 +662,14 @@ class NotebookWindow(Gtk.Window):
         slug = model.slugify(heading)
         if not slug:
             return
+
+        old_name = tab.note.name
+        new_name = slug + ".md"
+        if not self._confirm(
+                "Rename this note?",
+                f"\u201c{old_name}\u201d will be renamed to \u201c{new_name}\u201d."):
+            return
+
         try:
             new_path = model.rename_note(tab.note, slug)
         except OSError as exc:
@@ -642,7 +714,9 @@ class NotebookWindow(Gtk.Window):
         self.open_folder(folder)
 
     def on_preferences(self, _widget):
-        PreferencesDialog(self, self.settings, on_apply=self._apply_preferences)
+        dialog = PreferencesDialog(self, self.settings,
+                                   on_apply=self._apply_preferences)
+        dialog.run_modal()
 
     def _apply_preferences(self):
         """Re-theme tabs and toolbar after a preferences change."""
@@ -744,3 +818,18 @@ class NotebookWindow(Gtk.Window):
         )
         dialog.run()
         dialog.destroy()
+
+    def _confirm(self, primary, secondary=None):
+        """Yes/No confirmation dialog. Returns True if the user confirmed."""
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.OK_CANCEL,
+            text=primary,
+        )
+        if secondary:
+            dialog.format_secondary_text(secondary)
+        resp = dialog.run()
+        dialog.destroy()
+        return resp == Gtk.ResponseType.OK
