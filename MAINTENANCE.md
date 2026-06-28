@@ -152,6 +152,11 @@ enough" philosophy as the highlighter), not a full CommonMark parser.
   These **raise** `OSError`/`UnicodeDecodeError` on failure; the window catches
   and shows the error dialog. `write_note` refreshes the note's `mtime`. Writes
   are not atomic (see §6).
+- Card-view helpers: `first_body_line(note)` returns the first non-blank line
+  after a leading heading (skips one `#`..`######` line; if no heading, the first
+  non-blank line), or `""` on empty/unreadable; `format_mtime(note)` formats the
+  note's mtime as `YYYY-MM-DD HH:MM` (or `""` if unknown). Both feed the window's
+  `_note_markup`.
 - Slug/rename (for the Slugify toolbar button): `heading_for_slug(text)` returns
   the level-1 heading content if `text`'s first line is `# …` and the heading is
   **< 32** chars (`SLUG_MAX_HEADING_LEN`), else `None`. `slugify(heading)` lowers
@@ -344,21 +349,25 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
   active), and **Slugify** (`btn_slugify`). Slugify starts insensitive and is
   enabled/disabled by `_update_slugify_sensitivity()` (called from `update_status`):
   enabled only in edit mode when the active tab has a note whose live first line is
-  a short H1.
+  a short H1. Last, the **Card view** toggle (`btn_cardview`, off by default)
+  switches the note list between plain titles and three-line cards
+  (`on_toggle_card_view` flips `self.card_view` and reloads, keeping selection).
 - Note list (pane 2): a vertical box with a **search row** on top (a `Gtk.Entry`
   with a clear icon + a "Search" `Gtk.Button`) above a `Gtk.Stack`
   (`notelist_stack`). The stack has a "list" child (the scrolled
-  `Gtk.ListStore(str, str, float)` = display name, full path, mtime) and a
-  "placeholder" child shown when the Subfolders parent is selected.
-  `_reload_notelist` switches back to "list". Search filtering lives in
-  `_reload_notelist`: `self.search_query` (None = off) is passed to
-  `model.filter_notes`, which matches case-insensitively against each note's name
-  **and its full contents**; an empty result sets `self._search_no_results`,
-  which `update_status` renders as "No search results found!" instead of the item
-  count. The filter persists across node switches and reloads until the box is
-  cleared. (Content search reads every candidate file per search — fine for
-  typical note collections; for very large trees, consider an index or a
-  background thread — see §7.) Beyond filtering the list, `on_search` /
+  `Gtk.ListStore(str, str, float, str)` = display name, full path, mtime, **markup**)
+  and a "placeholder" child shown when the Subfolders parent is selected. The single
+  cell renderer binds to the **markup** column (#4); `_note_markup(note)` builds it:
+  in list view just the escaped title, in card view a `<b>`-titled block plus the
+  date and `first_body_line` in a small grey font. `_reload_notelist` switches back
+  to "list". Search filtering lives in `_reload_notelist`: `self.search_query`
+  (None = off) is passed to `model.filter_notes`, which matches case-insensitively
+  against each note's name **and its full contents**; an empty result sets
+  `self._search_no_results`, which `update_status` renders as "No search results
+  found!" instead of the item count. The filter persists across node switches and
+  reloads until the box is cleared. (Content search reads every candidate file per
+  search — fine for typical note collections; for very large trees, consider an
+  index or a background thread — see §7.) Beyond filtering the list, `on_search` /
   `on_search_icon_press` call `_apply_search_highlight()`, which tells the active
   tab to highlight the term (or clear it); the current query is also pushed to a
   tab when a note loads into it and on tab switch, so the highlight follows.
@@ -446,6 +455,12 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
   shows lag on large files, scope it to the edited line range.
 - File writes are not atomic. A crash mid-write could truncate a note. If
   robustness matters, write to a temp file and `os.replace`.
+- The note-list cell renders the **markup** column, so any dynamic text in a card
+  (title, date, first body line) must be XML-escaped — `_note_markup` uses
+  `xml.sax.saxutils.escape`. Unescaped `<`/`&` from note content would otherwise
+  break rendering.
+- Initial keyboard focus is set to the sidebar (`set_focus(self.sidebar_view)`)
+  so the first toolbar button doesn't show a focus ring on startup.
 
 ## 7. Suggested next features
 

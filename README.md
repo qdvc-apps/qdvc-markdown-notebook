@@ -11,7 +11,7 @@ It points at a folder of `.md` files and gives you:
 - **Middle pane** — a search box plus the list of notes for the selected sidebar item.
 - **Right pane** — a monospace editor with lightweight markdown syntax highlighting (no font-size variation).
 
-Plus a menu bar, toolbar (New / Save / Read-only / Preview / Slugify), and a status bar.
+Plus a menu bar, toolbar (New / Save / Read-only / Preview / Slugify / Card view), and a status bar.
 
 ## Read-only mode
 
@@ -48,6 +48,14 @@ keystroke. Matching terms are highlighted in yellow in the document you're
 viewing. Clearing the box (or pressing its clear icon) removes the filter and the
 highlighting. When a search matches nothing, the status bar shows *No search
 results found!* in place of the item count.
+
+## Card view
+
+The toolbar's **Card view** toggle (off by default) changes how the note list
+shows each note. Instead of just the title, each entry becomes a small card: the
+title in **bold**, then the last-modified date and the first line of body text
+(the first non-blank line after the note's heading) in a smaller, regular-weight
+font. Toggle it off to return to the plain title list.
 
 ## Menus
 

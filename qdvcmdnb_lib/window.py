@@ -7,6 +7,7 @@ delegated to qdvcmdnb_lib.model so this layer never touches disk directly.
 """
 
 import os
+from xml.sax.saxutils import escape as _xml_escape
 
 import gi
 
@@ -52,6 +53,7 @@ class NotebookWindow(Gtk.Window):
         self._note_select_guard = False   # suppress reselection feedback loops
         self.read_only = True             # (#1) start in read-only mode
         self.preview_mode = False         # rendered-markdown preview (all tabs)
+        self.card_view = False            # pane-2 card view (off by default)
         self.search_query = None          # active note-list search (None = off)
         self._search_no_results = False
 
@@ -67,6 +69,11 @@ class NotebookWindow(Gtk.Window):
 
         if root_folder:
             self.open_folder(os.path.abspath(root_folder))
+
+        # Don't let the first toolbar button take initial keyboard focus (it
+        # shows a focus ring / "highlight" on startup otherwise). Put focus on
+        # the sidebar instead.
+        self.set_focus(self.sidebar_view)
 
         self.connect("destroy", Gtk.main_quit)
         self.connect("delete-event", self._on_delete_event)
@@ -303,6 +310,19 @@ class NotebookWindow(Gtk.Window):
         self.btn_slugify.connect("clicked", self.on_slugify)
         toolbar.insert(self.btn_slugify, -1)
 
+        toolbar.insert(Gtk.SeparatorToolItem(), -1)
+
+        # Card view toggle: when active, pane 2 shows each note as a small card
+        # (bold title + date + first body line). Off by default.
+        self.btn_cardview = Gtk.ToggleToolButton()
+        self.btn_cardview.set_icon_name("view-list-details-symbolic")
+        self.btn_cardview.set_label("Card view")
+        self.btn_cardview.set_tooltip_text(
+            "Show notes as cards (title, date, first line)")
+        self.btn_cardview.set_active(False)
+        self.btn_cardview.connect("toggled", self.on_toggle_card_view)
+        toolbar.insert(self.btn_cardview, -1)
+
         return toolbar
 
     def _apply_toolbar_style(self):
@@ -374,14 +394,16 @@ class NotebookWindow(Gtk.Window):
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
 
-        # Columns: display name (str), full path (str), mtime (float)
-        self.note_store = Gtk.ListStore(str, str, float)
+        # Columns: display name (str), full path (str), mtime (float),
+        #          markup (str — what the cell renders; plain title in list view,
+        #          a three-line block in card view)
+        self.note_store = Gtk.ListStore(str, str, float, str)
         self.note_view = Gtk.TreeView(model=self.note_store)
         self.note_view.set_headers_visible(False)
 
         renderer = Gtk.CellRendererText()
         renderer.set_property("ellipsize", Pango.EllipsizeMode.END)
-        col = Gtk.TreeViewColumn("Notes", renderer, text=0)
+        col = Gtk.TreeViewColumn("Notes", renderer, markup=3)
         self.note_view.append_column(col)
 
         self.note_view.get_selection().connect(
@@ -485,6 +507,14 @@ class NotebookWindow(Gtk.Window):
     def on_toggle_preview(self, button):
         self.preview_mode = button.get_active()
         self._apply_preview()
+
+    # ------------------------------------------------------- card view -- #
+    def on_toggle_card_view(self, button):
+        self.card_view = button.get_active()
+        # Re-render the note list, keeping the current selection.
+        tab = self._active_tab()
+        keep = tab.note.path if (tab and tab.note) else None
+        self._reload_notelist(select_path=keep)
 
     # --------------------------------------------------------------- tabs -- #
     def _active_tab(self):
@@ -760,7 +790,8 @@ class NotebookWindow(Gtk.Window):
             self._search_no_results = False
 
         for n in notes:
-            self.note_store.append([n.display_name(), n.path, n.mtime])
+            self.note_store.append(
+                [n.display_name(), n.path, n.mtime, self._note_markup(n)])
 
         if select_path:
             # Re-select a specific note by its file path after reload.
@@ -769,6 +800,24 @@ class NotebookWindow(Gtk.Window):
                     self.note_view.get_selection().select_iter(row.iter)
                     break
         self.update_status()
+
+    def _note_markup(self, note):
+        """
+        Pango markup for one note row. In list view it's just the (bold-free)
+        title. In card view it's three lines: bold title, then the last-modified
+        date and the first body line in a smaller, regular-weight font.
+        """
+        title = _xml_escape(note.display_name())
+        if not self.card_view:
+            return title
+        date = _xml_escape(model.format_mtime(note))
+        snippet = _xml_escape(model.first_body_line(note))
+        # Smaller, grey second/third lines; blank lines are simply omitted text.
+        sub = (f"\n<span size='small' foreground='#666666'>{date}</span>"
+               if date else "")
+        sub += (f"\n<span size='small' foreground='#666666'>{snippet}</span>"
+                if snippet else "")
+        return f"<b>{title}</b>{sub}"
 
     # ----------------------------------------------------------- editor -- #
     def _load_note_in_active_tab(self, note):

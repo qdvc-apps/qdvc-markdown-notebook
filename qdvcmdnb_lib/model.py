@@ -136,6 +136,42 @@ def read_note(note):
         return fh.read()
 
 
+def first_body_line(note):
+    """
+    Return the first non-empty line of `note` that follows the leading heading,
+    for the card-view preview line. If the note starts with a level-1..6 heading
+    (`#`..`######`), that heading line is skipped; the first non-blank line after
+    it is returned. If there is no heading, the first non-blank line is returned.
+    Returns "" on an empty note or read error.
+    """
+    try:
+        content = read_note(note)
+    except (OSError, UnicodeDecodeError):
+        return ""
+    lines = content.split("\n")
+    idx = 0
+    # Skip leading blank lines.
+    while idx < len(lines) and lines[idx].strip() == "":
+        idx += 1
+    # If the first non-blank line is a heading, skip it.
+    if idx < len(lines) and re.match(r"^#{1,6}\s+\S", lines[idx]):
+        idx += 1
+    # Return the next non-blank line.
+    while idx < len(lines):
+        stripped = lines[idx].strip()
+        if stripped:
+            return stripped
+        idx += 1
+    return ""
+
+
+def format_mtime(note):
+    """Human-readable last-modified date for `note` (for card view)."""
+    if not note.mtime:
+        return ""
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(note.mtime))
+
+
 def write_note(note, content):
     """
     Write `content` to `note` on disk and refresh its mtime. May raise.
