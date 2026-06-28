@@ -51,6 +51,7 @@ class NotebookWindow(Gtk.Window):
         self.sort_mode = SORT_ALPHA
         self._note_select_guard = False   # suppress reselection feedback loops
         self.read_only = True             # (#1) start in read-only mode
+        self.preview_mode = False         # rendered-markdown preview (all tabs)
         self.search_query = None          # active note-list search (None = off)
         self._search_no_results = False
 
@@ -276,6 +277,17 @@ class NotebookWindow(Gtk.Window):
             "toggled", self.on_toggle_read_only)
         toolbar.insert(self.btn_readonly, -1)
 
+        # Preview toggle: when active, all tabs show rendered markdown (read-only)
+        # and the Read-only button is disabled. Applies across all tabs.
+        self.btn_preview = Gtk.ToggleToolButton()
+        self.btn_preview.set_icon_name("text-x-generic")
+        self.btn_preview.set_label("Preview")
+        self.btn_preview.set_tooltip_text(
+            "Preview rendered markdown (read-only)")
+        self.btn_preview.set_active(False)
+        self.btn_preview.connect("toggled", self.on_toggle_preview)
+        toolbar.insert(self.btn_preview, -1)
+
         toolbar.insert(Gtk.SeparatorToolItem(), -1)
 
         # Slugify: rename the active note from its level-1 heading. Enabled only
@@ -446,6 +458,20 @@ class NotebookWindow(Gtk.Window):
         self.read_only = button.get_active()
         self._apply_read_only()
 
+    # --------------------------------------------------------- preview -- #
+    def _apply_preview(self):
+        """Reflect self.preview_mode across all tabs and lock the read-only
+        button while preview is active (preview is always read-only)."""
+        for tab in self._tabs:
+            tab.set_preview(self.preview_mode)
+        # While previewing, the Read-only toggle is disabled (cannot change).
+        self.btn_readonly.set_sensitive(not self.preview_mode)
+        self.update_status()
+
+    def on_toggle_preview(self, button):
+        self.preview_mode = button.get_active()
+        self._apply_preview()
+
     # --------------------------------------------------------------- tabs -- #
     def _active_tab(self):
         idx = self.notebook.get_current_page()
@@ -499,6 +525,7 @@ class NotebookWindow(Gtk.Window):
                         code_font=self.settings.code_font)
         tab.apply_font(self.settings.editor_font)
         tab.set_editable(not self.read_only)
+        tab.set_preview(self.preview_mode)
         self._tabs.append(tab)
         idx = self.notebook.append_page(tab.widget, tab.tab_label)
         self.notebook.set_tab_reorderable(tab.widget, True)
@@ -554,8 +581,10 @@ class NotebookWindow(Gtk.Window):
 
     # -------------------------------------------------------- status bar -- #
     def update_status(self):
-        # Bold mode indicator (#1).
-        if self.read_only:
+        # Bold mode indicator. Preview overrides the read-only/edit label.
+        if self.preview_mode:
+            self.mode_label.set_markup("<b>Rendered Markdown preview</b>")
+        elif self.read_only:
             self.mode_label.set_markup("<b>Read-only mode</b>")
         else:
             self.mode_label.set_markup("<b>Edit mode</b>")

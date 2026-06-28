@@ -109,6 +109,19 @@ now uses the `NODE_*` kinds instead.)
   the rest of the editor uses `editor_font`. The constructor takes `code_font`
   and applies it immediately, so already-loaded text reflects the font.
 
+### 3.1a `pango_markdown.py` — Markdown → Pango markup (no GTK)
+`render(text)` converts a Markdown subset to a Pango markup string for Preview
+mode (no WebKit). Pango markup is inline-only (`<b>`, `<i>`, `<tt>`, `<span>`,
+size/weight/foreground), so block structure is approximated: headings become
+sized+bold spans, lists get bullet/number prefixes with indentation, blockquotes
+a `\u2503` bar + italics, fenced/inline code monospace with a grey background,
+horizontal rules a line of dashes, links the underlined coloured text (the URL is
+dropped — markup can't make clickable links). All text is XML-escaped first via
+`xml.sax.saxutils.escape`, and code spans/blocks are escaped but not further
+interpreted. The output is always well-formed markup. Pure text→text, no GTK, so
+it is unit-testable. Deliberately lightweight (same "good enough" philosophy as
+the highlighter), not a full CommonMark parser.
+
 ### 3.2 `model.py` — data layer (no GTK)
 - `Note` — a thin wrapper over a file path; caches `name` and `mtime`.
   `display_name()` strips a known markdown extension for the list label.
@@ -150,11 +163,12 @@ window. Each `EditorTab` owns its own `Gtk.TextView`, `Gtk.TextBuffer`,
 `MarkdownHighlighter`, the `note` open in it (or `None`), and per-tab `dirty` /
 `_loading` flags.
 - `widget` — the page widget added to the `Gtk.Notebook`. It is a `Gtk.Stack`
-  with two named children: `"editor"` (a scrolled `TextView`) and `"placeholder"`
-  (a centred dim "Select a note…" message). `_update_view_mode()` shows the
-  placeholder when `note is None`, else the editor; it is called from `clear()`
-  and `load_note()`. A fresh Ctrl+T tab therefore shows the placeholder until a
-  note is loaded.
+  with three named children: `"editor"` (a scrolled `TextView`), `"preview"` (a
+  read-only `TextView` showing rendered markdown), and `"placeholder"` (a centred
+  dim "Select a note…" message). `_update_view_mode()` picks the child: placeholder
+  when `note is None`, else `"preview"` when `self.preview`, else `"editor"`. It is
+  called from `clear()`, `load_note()`, and `set_preview()`. A fresh Ctrl+T tab
+  shows the placeholder until a note is loaded.
 - `tab_label` — a horizontal box: a title label + a borderless close button
   (Caja-style, `window-close` icon at `MENU` size). The title is the note's
   display name, truncated to `MAX_TAB_TITLE` (12) characters with a trailing
@@ -166,8 +180,12 @@ window. Each `EditorTab` owns its own `Gtk.TextView`, `Gtk.TextBuffer`,
 - API: `load_note(note)` → bool, `save()` → bool (both return False on I/O error
   and leave the dialog to the caller), `clear()`, `get_content()`,
   `apply_font(str)`, `apply_code_font(str)`, `set_editable(bool)` (read-only mode;
-  toggles `TextView.set_editable`/`set_cursor_visible`), `title_text()`. The
-  constructor takes `code_font` and forwards it to the highlighter.
+  toggles `TextView.set_editable`/`set_cursor_visible`), `set_preview(bool)`
+  (renders current content via `pango_markdown.render` into the preview buffer
+  with `insert_markup`, then switches the stack), `title_text()`. The constructor
+  takes `code_font` and forwards it to the highlighter.
+- Preview re-renders on `load_note` when already active; in preview the editor is
+  hidden and content can't change, so no live re-render is needed while previewing.
 - The dirty marker is a leading `*` on the tab title, refreshed by
   `_refresh_title()`.
 - `_loading` guards the buffer `changed` signal during programmatic text sets,
@@ -249,6 +267,17 @@ gated on it: New note shows a notice and aborts, and Slugify is desensitised in
 `_update_slugify_sensitivity`. Saving is left allowed (a read-only buffer cannot
 have changed, so it is harmless).
 
+Preview mode (toolbar toggle, default off): `self.preview_mode` is window-wide,
+applied by `_apply_preview()` which calls `tab.set_preview(...)` on every tab,
+**disables the Read-only toggle** (`btn_readonly.set_sensitive(False)`) so it
+can't be changed while previewing, and refreshes the status bar. `_new_tab` seeds
+new tabs from it. `on_toggle_preview` flips it from the `Gtk.ToggleToolButton`.
+In `update_status` the bold mode label shows "Rendered Markdown preview" when
+`preview_mode` is on, overriding the read-only/edit label; otherwise it shows
+"Read-only mode" / "Edit mode" as before. Preview is always read-only by
+construction (the preview `TextView` is non-editable), independent of
+`self.read_only`.
+
 Menus (order **File, Edit, View, Help**): **File** (New note, Save note, Open
 workspace, Close workspace, Open recent workspace, New tab, Close tab, Quit, with
 two separators per the layout), **Edit** (Preferences), **View** (Toolbar and
@@ -289,9 +318,10 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
   in both panes (`_show_notelist_placeholder` + `tab.clear()`).
 - Toolbar: built in `_build_toolbar`, style from `_toolbar_style_enum()`. Buttons:
   New note, Save note, the **Read-only** toggle (`btn_readonly`, a
-  `Gtk.ToggleToolButton`, active by default), and **Slugify** (`btn_slugify`).
-  Slugify starts insensitive and is enabled/disabled by
-  `_update_slugify_sensitivity()` (called from `update_status`): enabled only in
+  `Gtk.ToggleToolButton`, active by default), the **Preview** toggle
+  (`btn_preview`, off by default; locks the Read-only toggle while active), and
+  **Slugify** (`btn_slugify`). Slugify starts insensitive and is enabled/disabled
+  by `_update_slugify_sensitivity()` (called from `update_status`): enabled only in
   edit mode when the active tab has a note whose live first line is a short H1.
 - Note list (pane 2): a vertical box with a **search row** on top (a `Gtk.Entry`
   with a clear icon + a "Search" `Gtk.Button`) above a `Gtk.Stack`

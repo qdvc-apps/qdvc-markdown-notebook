@@ -11,7 +11,7 @@ It points at a folder of `.md` files and gives you:
 - **Middle pane** — a search box plus the list of notes for the selected sidebar item.
 - **Right pane** — a monospace editor with lightweight markdown syntax highlighting (no font-size variation).
 
-Plus a menu bar, toolbar (New / Save / Read-only / Slugify), and a status bar.
+Plus a menu bar, toolbar (New / Save / Read-only / Preview / Slugify), and a status bar.
 
 ## Read-only mode
 
@@ -19,6 +19,15 @@ The app starts in **read-only mode** — you can browse and read notes but not e
 them. The status bar shows the current mode in bold, and the toolbar has a
 Read-only toggle (pressed in by default). Release it to enter **edit mode**. The
 setting applies across all tabs at once.
+
+## Preview
+
+The toolbar's **Preview** toggle replaces the monospace editor with rendered
+markdown (headings, bold/italic, lists, blockquotes, code, links) across all
+tabs. The rendering uses Pango markup — no WebKit or external browser. Preview is
+always read-only: while it is active the Read-only toggle is disabled, and the
+status bar shows *Rendered Markdown preview*. Release Preview to return to the
+editor.
 
 ## Sidebar
 

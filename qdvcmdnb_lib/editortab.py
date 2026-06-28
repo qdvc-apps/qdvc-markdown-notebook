@@ -14,9 +14,10 @@ import os
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Pango  # noqa: E402
+from gi.repository import Gtk, Pango, GLib  # noqa: E402
 
 from . import model
+from . import pango_markdown
 from .highlighter import MarkdownHighlighter
 
 UNTITLED_LABEL = "Untitled"
@@ -48,10 +49,12 @@ class EditorTab:
         self.note = None
         self.dirty = False
         self._loading = False
+        self.preview = False  # whether this tab is showing rendered markdown
 
         # ---- editor widget ----
-        # The page widget is a Gtk.Stack with two children: the editor (a
-        # scrolled TextView) and a placeholder shown when no note is loaded.
+        # The page widget is a Gtk.Stack with children: the editor (a scrolled
+        # TextView), a read-only rendered-markdown preview, and a placeholder
+        # shown when no note is loaded.
         self.widget = Gtk.Stack()
 
         editor_scroll = Gtk.ScrolledWindow()
@@ -73,6 +76,23 @@ class EditorTab:
 
         editor_scroll.add(self.text_view)
         self.widget.add_named(editor_scroll, "editor")
+
+        # ---- rendered-markdown preview (read-only) ----
+        preview_scroll = Gtk.ScrolledWindow()
+        preview_scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
+                                  Gtk.PolicyType.AUTOMATIC)
+        self.preview_buffer = Gtk.TextBuffer()
+        self.preview_view = Gtk.TextView(buffer=self.preview_buffer)
+        self.preview_view.set_editable(False)
+        self.preview_view.set_cursor_visible(False)
+        self.preview_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self.preview_view.set_left_margin(8)
+        self.preview_view.set_right_margin(8)
+        self.preview_view.set_top_margin(8)
+        self.preview_view.set_bottom_margin(8)
+        preview_scroll.add(self.preview_view)
+        self.widget.add_named(preview_scroll, "preview")
+
         self.widget.add_named(self._build_placeholder(), "placeholder")
         self.widget.set_visible_child_name("placeholder")
         self.widget.show_all()
@@ -111,9 +131,34 @@ class EditorTab:
         return box
 
     def _update_view_mode(self):
-        """Show the editor when a note is open, else the placeholder."""
-        name = "editor" if self.note else "placeholder"
-        self.widget.set_visible_child_name(name)
+        """Choose which stack child to show based on note/preview state."""
+        if not self.note:
+            self.widget.set_visible_child_name("placeholder")
+        elif self.preview:
+            self.widget.set_visible_child_name("preview")
+        else:
+            self.widget.set_visible_child_name("editor")
+
+    def set_preview(self, on):
+        """
+        Turn rendered-markdown preview on/off for this tab. When turning on, the
+        preview is (re)rendered from the current editor content.
+        """
+        self.preview = bool(on)
+        if self.preview:
+            self._render_preview()
+        self._update_view_mode()
+
+    def _render_preview(self):
+        """Render the current editor content to the read-only preview buffer."""
+        markup = pango_markdown.render(self.get_content())
+        self.preview_buffer.set_text("")
+        start = self.preview_buffer.get_start_iter()
+        try:
+            self.preview_buffer.insert_markup(start, markup, -1)
+        except (TypeError, GLib.GError):  # pragma: no cover
+            # Extremely defensive: if markup somehow fails, fall back to plain.
+            self.preview_buffer.set_text(self.get_content())
 
     # --------------------------------------------------------------- API -- #
     def apply_font(self, font_desc_str):
@@ -157,6 +202,8 @@ class EditorTab:
         self.note = note
         self.dirty = False
         self.highlighter.highlight()
+        if self.preview:
+            self._render_preview()
         self._refresh_title()
         self._update_view_mode()
         return True
