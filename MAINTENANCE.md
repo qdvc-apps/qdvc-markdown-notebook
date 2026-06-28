@@ -21,6 +21,7 @@ qdvcmdnb_lib/
     model.py                     # data layer: Note + filesystem + disk I/O (no GTK)
     highlighter.py               # MarkdownHighlighter (GTK TextBuffer tagging)
     editortab.py                 # EditorTab: one tab's editor widget + state
+    preferences.py               # PreferencesDialog: fonts + toolbar style
     window.py                    # NotebookWindow: view + controller
 ```
 
@@ -65,11 +66,13 @@ from anywhere. `ALL_NOTES` is an `object()`; compare with `is`, never `==`.
 - Stores settings as YAML at `$XDG_CONFIG_HOME/qdvcmdnb/config.yml`, falling back
   to `~/.config/qdvcmdnb/config.yml`. Resolve via `config_dir()` / `config_path()`.
 - `Settings` holds `editor_font` and `code_font` (both Pango font-description
-  strings) and `recent_folders` (most-recent-first list, capped at `MAX_RECENT`).
-  `editor_font` themes the whole editor; `code_font` is applied to inline code and
-  fenced code blocks only (see the highlighter). Construct via `Settings.load()`,
-  which returns sane defaults on a missing/malformed file or any read error — it
-  never raises to the caller.
+  strings), `toolbar_style` (`"below"` or `"beside"`, the `TOOLBAR_TEXT_*`
+  constants), and `recent_folders` (most-recent-first list, capped at
+  `MAX_RECENT`). `editor_font` themes the whole editor; `code_font` is applied to
+  inline code and fenced code blocks only (see the highlighter); `toolbar_style`
+  controls whether toolbar button text sits below or beside the icon. Construct
+  via `Settings.load()`, which returns sane defaults on a missing/malformed file
+  or any read error — it never raises to the caller.
 - `save()` writes atomically (temp file + `os.replace`) and returns a bool.
 - `add_recent_folder()` dedups (moves existing to front), prunes directories that
   no longer exist, and caps the list.
@@ -119,13 +122,28 @@ from anywhere. `ALL_NOTES` is an `object()`; compare with `is`, never `==`.
   These **raise** `OSError`/`UnicodeDecodeError` on failure; the window catches
   and shows the error dialog. `write_note` refreshes the note's `mtime`. Writes
   are not atomic (see §6).
+- Slug/rename (for the Slugify toolbar button): `heading_for_slug(text)` returns
+  the level-1 heading content if `text`'s first line is `# …` and the heading is
+  **< 32** chars (`SLUG_MAX_HEADING_LEN`), else `None`. `slugify(heading)` lowers
+  the text and collapses every run of non-`[a-z]` characters to a single dash,
+  stripping leading/trailing dashes (so `"My awesome new note!"` →
+  `"my-awesome-new-note"`; digits and punctuation are dropped). `rename_note(note,
+  base)` renames the file in place within its folder, using `unique_note_path` to
+  avoid collisions, and updates the `Note`'s `path`/`name`; it is a no-op if the
+  name is already correct. All three are pure/testable; the heading check reads
+  the tab's **live** buffer, not the file on disk.
 
 ### 3.2a `editortab.py` — `EditorTab`
 Encapsulates one tab's editor state, which previously lived directly on the
 window. Each `EditorTab` owns its own `Gtk.TextView`, `Gtk.TextBuffer`,
 `MarkdownHighlighter`, the `note` open in it (or `None`), and per-tab `dirty` /
 `_loading` flags.
-- `widget` — the page widget added to the `Gtk.Notebook` (a `ScrolledWindow`).
+- `widget` — the page widget added to the `Gtk.Notebook`. It is a `Gtk.Stack`
+  with two named children: `"editor"` (a scrolled `TextView`) and `"placeholder"`
+  (a centred dim "Select a note…" message). `_update_view_mode()` shows the
+  placeholder when `note is None`, else the editor; it is called from `clear()`
+  and `load_note()`. A fresh Ctrl+T tab therefore shows the placeholder until a
+  note is loaded.
 - `tab_label` — a horizontal box: a title label + a borderless close button
   (Caja-style, `window-close` icon at `MENU` size). The title is the note's
   display name, truncated to `MAX_TAB_TITLE` (12) characters with a trailing
@@ -142,6 +160,15 @@ window. Each `EditorTab` owns its own `Gtk.TextView`, `Gtk.TextBuffer`,
   `_refresh_title()`.
 - `_loading` guards the buffer `changed` signal during programmatic text sets,
   exactly as the single-editor version did — but now per tab.
+
+### 3.2b `preferences.py` — `PreferencesDialog`
+A modal `Gtk.Dialog` (GNOME2/MATE idiom: "Preferences" under the **Edit** menu).
+It mutates and `save()`s the passed-in `Settings`, then calls the window's
+`on_apply` callback so changes apply live. Two sections: a Fonts frame with two
+`Gtk.FontButton`s (editor + code), and a Toolbar frame with a radio pair
+(text below vs beside icons). Each control persists and re-applies immediately on
+change — there is no separate Apply/OK step beyond Close. This module replaced the
+former *View → Set Editor Font* / *Set Code Font* menu items.
 
 ### 3.3 `window.py` — `NotebookWindow` (view + controller)
 The editor area is now a `Gtk.Notebook` of `EditorTab` pages; `self._tabs` is a
@@ -170,19 +197,26 @@ Tab wiring:
   which is what makes the whole tab bar vanish at one tab.
 - `_active_tab()` maps the notebook's current page index to `_tabs`.
 - Ctrl+T → `on_new_tab`; Ctrl+W → `on_close_tab` (both also menu items under
-  File). Right-click in the note list → `on_notelist_button_press` builds a
-  one-item popup ("Open in new tab") via `_load_note_in_new_tab`.
+  File). Right-click in the note list → `on_notelist_button_press` builds a popup
+  with "Open in new tab", "Copy full path", and "Show in file browser".
 - Quitting/closing the window runs `_confirm_close_all`, which prompts for *every*
   dirty tab before exit.
+
+Menus: **File** (New, Save, Open Working Folder, Open Recent, New Tab, Close Tab,
+Quit), **View** (the three sort modes — font items were removed), **Edit**
+(Preferences), **Help** (About). `on_preferences` opens the `PreferencesDialog`
+with `_apply_preferences` as its callback; `on_about` shows a `Gtk.AboutDialog`.
 
 Settings wiring: `__init__` calls `Settings.load()`, then after `_build_ui()`
 calls `_apply_editor_font()`, `_apply_code_font()`, and `_rebuild_recent_menu()`.
 `open_folder()` calls `_remember_folder()` (which records, saves, and refreshes
-the Open Recent menu). `on_choose_font` / `on_choose_code_font` use a
-`Gtk.FontChooserDialog`, persist the choice, and re-apply it to **all** tabs
-(`_apply_editor_font` / `_apply_code_font` respectively); `on_open_recent` opens a
-folder from the menu (handling the case where it has since been deleted). Fonts
-are applied **only** via those two helpers so there is one source of truth each.
+the Open Recent menu). Font and toolbar-style changes now flow through the
+Preferences dialog, whose `on_apply` callback (`_apply_preferences`) re-applies
+the editor font, code font, and toolbar style to the live UI. `_apply_editor_font`
+and `_apply_code_font` iterate **all** tabs; `_apply_toolbar_style` maps
+`settings.toolbar_style` to a `Gtk.ToolbarStyle` (`BOTH` = below, `BOTH_HORIZ` =
+beside) via `_toolbar_style_enum()`. `on_open_recent` opens a folder from the menu
+(handling the case where it has since been deleted).
 
 Note: inside the selection handlers the local variable for the GTK model is
 named `model_` (trailing underscore) to avoid shadowing the imported `model`
@@ -199,6 +233,13 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
   **Beware the index shift:** `is_all` is column **3**, subfolder name column
   **2** (they were 2 and 1 before the icon column was added) — selection handlers
   read those indices.
+- Toolbar: built in `_build_toolbar`, style from `_toolbar_style_enum()`. Buttons:
+  New note, Save note, and **Slugify** (`btn_slugify`). Slugify starts insensitive
+  and is enabled/disabled by `_update_slugify_sensitivity()` (called from
+  `update_status`, so it re-evaluates on edits, tab switches, and loads): enabled
+  only when the active tab has a note and its live first line is a short H1 that
+  yields a non-empty slug. `on_slugify` renames via `model.rename_note`, refreshes
+  the tab title, and reloads the list selecting the new path.
 - Note list: `Gtk.ListStore(str, str, float)` = (display name, full path, mtime).
 - Editor: a `Gtk.Notebook`; each page is an `EditorTab` (see §3.2a). `editor_font`
   themes the whole view; `code_font` themes code spans via the highlighter tags.
@@ -219,16 +260,23 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
   (`_show_in_file_browser`, which converts the parent dir to a `file://` URI with
   `GLib.filename_to_uri` and opens it via `Gtk.show_uri_on_window`).
 - Typing → the tab's own `_buffer_changed` sets its `dirty` flag, re-highlights,
-  updates the tab title, and calls back to the window to refresh the status bar.
+  updates the tab title, and calls back to the window (`_on_tab_changed` →
+  `update_status`, which also re-evaluates Slugify sensitivity).
 - New note → `on_new_note` writes an empty file into the current subfolder (or
   root if All Notes is selected) via `model.create_empty_note`, reloads the list,
   and opens it in the active tab.
+- Slugify → `on_slugify` reads the active tab's live content, derives a slug from
+  its H1, renames via `model.rename_note`, and refreshes title + list. The button
+  is only sensitive when those conditions hold (see §3.3 toolbar).
 - New tab (Ctrl+T) → `on_new_tab` → `_new_tab(focus=True)`.
 - Close tab (Ctrl+W / close button) → `on_close_tab` / the tab's close callback →
   `_close_tab`, a no-op at one tab.
 - Save → `_save_active` writes the active tab's content to its note.
 - Sort change → `on_sort_changed` reloads the list, keeping the active tab's note
   selected by path.
+- Preferences → `on_preferences` opens the dialog; its `on_apply` callback
+  (`_apply_preferences`) re-themes fonts and toolbar live.
+- About → `on_about` shows a `Gtk.AboutDialog`.
 - Quit / window close → `_confirm_close_all` prompts for each dirty tab.
 
 ## 5. Known deviations from the original spec
@@ -236,8 +284,12 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
 - **Quit shortcut.** The spec listed `Ctrl+S` for both Save and Quit. That is a
   collision, so Quit is bound to the conventional **Ctrl+Q**. If you truly want
   Ctrl+S for Quit, change the accelerator on `mi_quit` — but you'll lose Save.
-- **No rename UI yet.** New notes are created as `Untitled.md`,
-  `Untitled 1.md`, … Renaming is a natural next feature (see §7).
+- **Rename.** There is no free-form rename UI; renaming happens via **Slugify**,
+  which derives the filename from the note's H1. New notes start as `Untitled.md`,
+  `Untitled 1.md`, … A general inline-rename remains a natural next feature (§7).
+- **Desktop integration.** The app ships no installer; the `.desktop` file is set
+  up by hand (see README). `Icon=accessories-text-editor` is a stock freedesktop
+  icon present on typical GNOME/MATE installs.
 
 ## 6. Gotchas
 
@@ -255,13 +307,14 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
 
 ## 7. Suggested next features
 
-- Rename note (inline edit in the list; `os.rename` + reload).
+- Free-form rename note (inline edit in the list; `model.rename_note` already
+  exists, so this is mostly UI).
 - Delete note (with confirmation; move to trash via `Gio.File.trash`).
 - Live full-text search box above the note list (filter `note_store`).
 - File-system watch (`Gio.FileMonitor`) to auto-refresh on external changes.
 - Per-note word/char count in the status bar.
-- Remember last folder and window geometry (e.g. via `GLib.KeyFile` in
-  `$XDG_CONFIG_HOME`).
+- Remember last folder and window geometry (e.g. as more keys in the settings
+  YAML).
 
 ## 8. Testing
 
@@ -283,9 +336,9 @@ ordered = model.sort_notes(notes, config.SORT_DATE_NEW)
 ```
 
 This is a good place to add a real `tests/` directory (pytest) covering
-`collect_notes`, `immediate_subfolders`, `sort_notes`, and the
-`unique_note_path`/`create_empty_note`/`read_note`/`write_note` roundtrip — none
-of which need GTK.
+`collect_notes`, `immediate_subfolders`, `sort_notes`, the
+`unique_note_path`/`create_empty_note`/`read_note`/`write_note` roundtrip, and the
+`heading_for_slug`/`slugify`/`rename_note` helpers — none of which need GTK.
 
 Manual smoke test (needs GTK installed):
 

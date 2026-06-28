@@ -50,8 +50,13 @@ class EditorTab:
         self._loading = False
 
         # ---- editor widget ----
-        self.widget = Gtk.ScrolledWindow()
-        self.widget.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        # The page widget is a Gtk.Stack with two children: the editor (a
+        # scrolled TextView) and a placeholder shown when no note is loaded.
+        self.widget = Gtk.Stack()
+
+        editor_scroll = Gtk.ScrolledWindow()
+        editor_scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
+                                 Gtk.PolicyType.AUTOMATIC)
 
         self.text_buffer = Gtk.TextBuffer()
         self.text_view = Gtk.TextView(buffer=self.text_buffer)
@@ -66,7 +71,10 @@ class EditorTab:
                                                code_font=code_font)
         self.text_buffer.connect("changed", self._buffer_changed)
 
-        self.widget.add(self.text_view)
+        editor_scroll.add(self.text_view)
+        self.widget.add_named(editor_scroll, "editor")
+        self.widget.add_named(self._build_placeholder(), "placeholder")
+        self.widget.set_visible_child_name("placeholder")
         self.widget.show_all()
 
         # ---- tab label (title + close button) ----
@@ -87,6 +95,25 @@ class EditorTab:
         self.tab_label.show_all()
 
         self._refresh_title()
+        self._update_view_mode()
+
+    # --------------------------------------------------- placeholder ----- #
+    def _build_placeholder(self):
+        """A centred, dim message shown when the tab has no note open."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.set_valign(Gtk.Align.CENTER)
+        box.set_halign(Gtk.Align.CENTER)
+        label = Gtk.Label()
+        label.set_markup(
+            "<span size='large' foreground='#888888'>"
+            "Select a note to start reading or editing</span>")
+        box.add(label)
+        return box
+
+    def _update_view_mode(self):
+        """Show the editor when a note is open, else the placeholder."""
+        name = "editor" if self.note else "placeholder"
+        self.widget.set_visible_child_name(name)
 
     # --------------------------------------------------------------- API -- #
     def apply_font(self, font_desc_str):
@@ -108,6 +135,7 @@ class EditorTab:
         self.note = None
         self.dirty = False
         self._refresh_title()
+        self._update_view_mode()
 
     def load_note(self, note):
         """
@@ -125,6 +153,7 @@ class EditorTab:
         self.dirty = False
         self.highlighter.highlight()
         self._refresh_title()
+        self._update_view_mode()
         return True
 
     def save(self):

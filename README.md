@@ -31,15 +31,60 @@ On Debian/Ubuntu/MATE:
 sudo apt install python3-gi gir1.2-gtk-3.0 python3-yaml
 ```
 
-## Settings
+## Desktop integration (application menu entry)
 
-Persistent settings live in a plain, git-trackable YAML file at
-`~/.config/qdvcmdnb/config.yml` (or under `$XDG_CONFIG_HOME`). It remembers:
+To make "QDVC Markdown Notebook" appear in your MATE/GNOME application menu,
+install a `.desktop` file.
 
-- **Editor font** — set via *View → Set Editor Font…*
-- **Code font** — font for inline code and fenced code blocks, set via
-  *View → Set Code Font…*
-- **Recent working folders** — reopen them from *File → Open Recent*
+First decide where the script lives. Assuming you keep the project at
+`~/Applications/qdvc-markdown-notebook/` (adjust the `Exec` path below to match),
+create `~/.local/share/applications/qdvc-markdown-notebook.desktop` with:
+
+```ini
+[Desktop Entry]
+Type=Application
+Name=QDVC Markdown Notebook
+Comment=Three-pane markdown notebook viewer/editor
+Exec=python3 /home/YOUR_USERNAME/Applications/qdvc-markdown-notebook/qdvc_markdown_notebook.py %F
+Icon=accessories-text-editor
+Terminal=false
+Categories=Office;Utility;TextEditor;
+MimeType=text/markdown;
+StartupNotify=true
+```
+
+Notes:
+- Replace the `Exec` path with the absolute path to `qdvc_markdown_notebook.py`.
+  The script must be able to find its `qdvcmdnb_lib/` package alongside it, which
+  it will as long as you point `Exec` at the script in its own directory.
+- `%F` lets the launcher pass a folder you drop onto the icon as the working
+  folder argument; launching with no argument starts empty (use Ctrl+O).
+- `Icon=accessories-text-editor` is a standard freedesktop icon present on a
+  typical GNOME/MATE install (it's the generic text-editor icon, the same family
+  Pluma uses). To use your own icon instead, point `Icon=` at an absolute path to
+  a `.png` or `.svg`.
+
+Then refresh the menu database (often automatic):
+
+```bash
+update-desktop-database ~/.local/share/applications
+```
+
+For a system-wide entry available to all users, place the file in
+`/usr/share/applications/` instead (requires root).
+
+
+## Preferences
+
+Open *Edit → Preferences* to configure:
+
+- **Editor font** — the font for the whole editor.
+- **Code font** — a separate font for inline code and fenced code blocks.
+- **Toolbar style** — whether toolbar button text appears below or beside icons.
+
+These are stored in a plain, git-trackable YAML file at
+`~/.config/qdvcmdnb/config.yml` (or under `$XDG_CONFIG_HOME`), along with your
+list of recent working folders (reopen them from *File → Open Recent*).
 
 ## Tabs
 
@@ -52,6 +97,14 @@ Open notes across multiple tabs:
   × on each tab).
 - Tabs are titled with the note name (truncated past 12 characters).
 - With only one tab open, the tab bar is hidden.
+- A tab with no note shows a placeholder prompting you to select one.
+
+## Slugify
+
+The toolbar's **Slugify** button renames the current note from its title. It is
+enabled only when the note's first line is a level-1 heading (`# …`) shorter than
+32 characters. Clicking it renames the file to a lowercase, dash-separated slug —
+e.g. a note titled `# My awesome new note!` becomes `my-awesome-new-note.md`.
 
 ## Keyboard shortcuts
 
@@ -63,5 +116,7 @@ Open notes across multiple tabs:
 | New tab              | Ctrl+T   |
 | Close tab            | Ctrl+W   |
 | Quit                 | Ctrl+Q   |
+
+There's also *Help → About* for version and project information.
 
 See [MAINTENANCE.md](MAINTENANCE.md) for architecture and maintainer notes.

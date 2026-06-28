@@ -7,6 +7,7 @@ collection), sorting, and all disk read/write/create operations.
 """
 
 import os
+import re
 import time
 
 from .config import (
@@ -122,3 +123,62 @@ def create_empty_note(folder, base="Untitled", ext=".md"):
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("")
     return path
+
+
+# --------------------------------------------------------------------------- #
+# Slug / rename helpers
+# --------------------------------------------------------------------------- #
+_H1_RE = re.compile(r"^#\s+(\S.*?)\s*$")
+SLUG_MAX_HEADING_LEN = 32
+
+
+def heading_for_slug(text):
+    """
+    If `text`'s first line is a markdown level-1 heading (`# ...`) whose heading
+    content is shorter than SLUG_MAX_HEADING_LEN characters, return that heading
+    text. Otherwise return None.
+
+    Note the length test is on the heading *content* (after "# "), matching the
+    user-visible title; "less than 32" is strict (< 32).
+    """
+    first_line = text.split("\n", 1)[0]
+    m = _H1_RE.match(first_line)
+    if not m:
+        return None
+    heading = m.group(1)
+    if len(heading) >= SLUG_MAX_HEADING_LEN:
+        return None
+    return heading
+
+
+def slugify(heading):
+    """
+    Turn a heading into a filename slug: lowercase, only [a-z] and dashes.
+    Runs of non-alphabetic characters collapse to a single dash; leading and
+    trailing dashes are stripped. E.g. "My awesome new note!" -> "my-awesome-new-note".
+    Returns "" if nothing usable remains.
+    """
+    lowered = heading.lower()
+    # Replace any run of characters that are not a-z with a single dash.
+    slug = re.sub(r"[^a-z]+", "-", lowered)
+    return slug.strip("-")
+
+
+def rename_note(note, new_basename, ext=".md"):
+    """
+    Rename `note` on disk to `new_basename + ext` within the same directory,
+    avoiding collisions via unique_note_path. Updates the Note's path/name in
+    place and returns the new path. May raise OSError.
+
+    If the target equals the current path (already correctly named), this is a
+    no-op that returns the current path.
+    """
+    folder = os.path.dirname(note.path)
+    desired = os.path.join(folder, new_basename + ext)
+    if os.path.abspath(desired) == os.path.abspath(note.path):
+        return note.path
+    target = unique_note_path(folder, base=new_basename, ext=ext)
+    os.rename(note.path, target)
+    note.path = target
+    note.name = os.path.basename(target)
+    return target

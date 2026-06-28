@@ -34,6 +34,12 @@ except ImportError:  # pragma: no cover - exercised only without PyYAML
 # Defaults that match the editor's previous hard-coded behaviour.
 DEFAULT_EDITOR_FONT = "monospace 11"
 DEFAULT_CODE_FONT = "monospace 11"
+
+# Toolbar style: icon text beside vs below the icon.
+TOOLBAR_TEXT_BESIDE = "beside"
+TOOLBAR_TEXT_BELOW = "below"
+DEFAULT_TOOLBAR_STYLE = TOOLBAR_TEXT_BELOW
+
 SCHEMA_VERSION = 1
 MAX_RECENT = 10
 
@@ -84,6 +90,7 @@ class Settings:
     def __init__(self):
         self.editor_font = DEFAULT_EDITOR_FONT
         self.code_font = DEFAULT_CODE_FONT
+        self.toolbar_style = DEFAULT_TOOLBAR_STYLE
         self.recent_folders = []
         self._extra = {}  # forward-compatibility: unrecognised top-level keys
 
@@ -122,12 +129,17 @@ class Settings:
         if isinstance(code_font, str) and code_font.strip():
             self.code_font = code_font
 
+        toolbar_style = data.get("toolbar_style")
+        if toolbar_style in (TOOLBAR_TEXT_BESIDE, TOOLBAR_TEXT_BELOW):
+            self.toolbar_style = toolbar_style
+
         recents = data.get("recent_folders")
         if isinstance(recents, list):
             self.recent_folders = [r for r in recents if isinstance(r, str)]
 
         # Preserve any keys we don't recognise (and our known ones are filtered).
-        known = {"version", "editor_font", "code_font", "recent_folders"}
+        known = {"version", "editor_font", "code_font", "toolbar_style",
+                 "recent_folders"}
         self._extra = {k: v for k, v in data.items() if k not in known}
 
     # ------------------------------------------------------------ saving -- #
@@ -136,6 +148,7 @@ class Settings:
             "version": SCHEMA_VERSION,
             "editor_font": self.editor_font,
             "code_font": self.code_font,
+            "toolbar_style": self.toolbar_style,
             "recent_folders": list(self.recent_folders),
         }
         d.update(self._extra)  # round-trip forward-compatible keys
@@ -167,6 +180,10 @@ class Settings:
     def set_code_font(self, font_str):
         if isinstance(font_str, str) and font_str.strip():
             self.code_font = font_str
+
+    def set_toolbar_style(self, style):
+        if style in (TOOLBAR_TEXT_BESIDE, TOOLBAR_TEXT_BELOW):
+            self.toolbar_style = style
 
     def add_recent_folder(self, folder):
         """

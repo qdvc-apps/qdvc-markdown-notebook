@@ -23,6 +23,7 @@ from .config import (
 )
 from .settings import Settings
 from .editortab import EditorTab
+from .preferences import PreferencesDialog
 
 
 class NotebookWindow(Gtk.Window):
@@ -161,22 +162,41 @@ class NotebookWindow(Gtk.Window):
         mi_old_first.connect("toggled", self.on_sort_changed, SORT_DATE_OLD)
         view_menu.append(mi_old_first)
 
-        view_menu.append(Gtk.SeparatorMenuItem())
-
-        mi_font = Gtk.MenuItem(label="Set Editor Font\u2026")
-        mi_font.connect("activate", self.on_choose_font)
-        view_menu.append(mi_font)
-
-        mi_code_font = Gtk.MenuItem(label="Set Code Font\u2026")
-        mi_code_font.connect("activate", self.on_choose_code_font)
-        view_menu.append(mi_code_font)
-
         menubar.append(view_item)
+
+        # ---- Edit menu ----
+        edit_menu = Gtk.Menu()
+        edit_item = Gtk.MenuItem(label="Edit")
+        edit_item.set_submenu(edit_menu)
+
+        mi_prefs = Gtk.MenuItem(label="Preferences\u2026")
+        mi_prefs.connect("activate", self.on_preferences)
+        edit_menu.append(mi_prefs)
+
+        menubar.append(edit_item)
+
+        # ---- Help menu ----
+        help_menu = Gtk.Menu()
+        help_item = Gtk.MenuItem(label="Help")
+        help_item.set_submenu(help_menu)
+
+        mi_about = Gtk.MenuItem(label="About")
+        mi_about.connect("activate", self.on_about)
+        help_menu.append(mi_about)
+
+        menubar.append(help_item)
         return menubar
+
+    def _toolbar_style_enum(self):
+        from .settings import TOOLBAR_TEXT_BESIDE
+        if self.settings.toolbar_style == TOOLBAR_TEXT_BESIDE:
+            return Gtk.ToolbarStyle.BOTH_HORIZ
+        return Gtk.ToolbarStyle.BOTH
 
     def _build_toolbar(self):
         toolbar = Gtk.Toolbar()
-        toolbar.set_style(Gtk.ToolbarStyle.BOTH)
+        self.toolbar = toolbar
+        toolbar.set_style(self._toolbar_style_enum())
 
         btn_new = Gtk.ToolButton(icon_name="document-new")
         btn_new.set_label("New note")
@@ -190,7 +210,20 @@ class NotebookWindow(Gtk.Window):
         btn_save.connect("clicked", self.on_save_note)
         toolbar.insert(btn_save, -1)
 
+        # Slugify: rename the active note from its level-1 heading. Enabled only
+        # when the active tab's first line is a short (<32 char) H1.
+        self.btn_slugify = Gtk.ToolButton(icon_name="insert-link")
+        self.btn_slugify.set_label("Slugify")
+        self.btn_slugify.set_tooltip_text(
+            "Rename this note from its level-1 heading")
+        self.btn_slugify.set_sensitive(False)
+        self.btn_slugify.connect("clicked", self.on_slugify)
+        toolbar.insert(self.btn_slugify, -1)
+
         return toolbar
+
+    def _apply_toolbar_style(self):
+        self.toolbar.set_style(self._toolbar_style_enum())
 
     def _build_sidebar(self):
         scroll = Gtk.ScrolledWindow()
@@ -349,6 +382,19 @@ class NotebookWindow(Gtk.Window):
                    f"/{len(self._tabs)}"
         self.statusbar.pop(self._status_ctx)
         self.statusbar.push(self._status_ctx, msg)
+        self._update_slugify_sensitivity()
+
+    def _update_slugify_sensitivity(self):
+        """
+        Enable Slugify only when the active tab has a note AND its current
+        (live) first line is a short level-1 heading.
+        """
+        tab = self._active_tab()
+        enabled = False
+        if tab is not None and tab.note is not None:
+            heading = model.heading_for_slug(tab.get_content())
+            enabled = heading is not None and model.slugify(heading) != ""
+        self.btn_slugify.set_sensitive(enabled)
 
     # ------------------------------------------------------ folder logic -- #
     def open_folder(self, folder):
@@ -542,6 +588,26 @@ class NotebookWindow(Gtk.Window):
     def on_save_note(self, _widget):
         self._save_active()
 
+    def on_slugify(self, _widget):
+        tab = self._active_tab()
+        if tab is None or tab.note is None:
+            return
+        heading = model.heading_for_slug(tab.get_content())
+        if heading is None:
+            return
+        slug = model.slugify(heading)
+        if not slug:
+            return
+        try:
+            new_path = model.rename_note(tab.note, slug)
+        except OSError as exc:
+            self._error_dialog(f"Could not rename note:\n{exc}")
+            return
+        # tab.note was updated in place by rename_note; refresh title + list.
+        tab._refresh_title()
+        self._reload_notelist(select_path=new_path)
+        self.update_status()
+
     def on_open_folder(self, _widget):
         dialog = Gtk.FileChooserDialog(
             title="Open Working Folder",
@@ -575,29 +641,22 @@ class NotebookWindow(Gtk.Window):
             return
         self.open_folder(folder)
 
-    def on_choose_font(self, _widget):
-        dialog = Gtk.FontChooserDialog(title="Set Editor Font", parent=self)
-        dialog.set_font(self.settings.editor_font)
-        # Only the markdown editor is themed; a sample hints at the use.
-        dialog.set_preview_text("# Heading\nBody text 0123 *italic* `code`")
-        if dialog.run() == Gtk.ResponseType.OK:
-            chosen = dialog.get_font()
-            if chosen:
-                self.settings.set_editor_font(chosen)
-                self.settings.save()
-                self._apply_editor_font()
-        dialog.destroy()
+    def on_preferences(self, _widget):
+        PreferencesDialog(self, self.settings, on_apply=self._apply_preferences)
 
-    def on_choose_code_font(self, _widget):
-        dialog = Gtk.FontChooserDialog(title="Set Code Font", parent=self)
-        dialog.set_font(self.settings.code_font)
-        dialog.set_preview_text("def hello(): return `inline` # 0123")
-        if dialog.run() == Gtk.ResponseType.OK:
-            chosen = dialog.get_font()
-            if chosen:
-                self.settings.set_code_font(chosen)
-                self.settings.save()
-                self._apply_code_font()
+    def _apply_preferences(self):
+        """Re-theme tabs and toolbar after a preferences change."""
+        self._apply_editor_font()
+        self._apply_code_font()
+        self._apply_toolbar_style()
+
+    def on_about(self, _widget):
+        dialog = Gtk.AboutDialog(transient_for=self, modal=True)
+        dialog.set_program_name(APP_NAME)
+        dialog.set_comments(
+            "A three-pane markdown notebook for the MATE / GNOME2-era desktop.")
+        dialog.set_logo_icon_name("accessories-text-editor")
+        dialog.run()
         dialog.destroy()
 
     def on_sort_changed(self, widget, mode):
