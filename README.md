@@ -11,7 +11,7 @@ It points at a folder of `.md` files and gives you:
 - **Middle pane** — a search box plus the list of notes for the selected sidebar item.
 - **Right pane** — a monospace editor with lightweight markdown syntax highlighting (no font-size variation).
 
-Plus a menu bar, toolbar (New / Save / Read-only / Preview / Slugify / Card view), and a status bar.
+Plus a menu bar, toolbar (New / Save / Refresh / Slugify / Card view / Read-only / Preview), and a status bar.
 
 ## Read-only mode
 
@@ -54,10 +54,9 @@ results found!* in place of the item count.
 The toolbar's **Card view** toggle (off by default) changes how the note list
 shows each note. Instead of just the title, each entry becomes a small card: the
 title in **bold**, then the last-modified date and the first line of body text
-(the first non-blank line after the note's heading) in a smaller, regular-weight
-font. A thin separator line is drawn between cards, and the date/first-line of the
-selected card lighten slightly so they stay readable on the selection highlight.
-Toggle it off to return to the plain title list.
+(the first non-blank line after the note's heading) in a smaller *italic* font.
+A thin separator line is drawn between cards, and each card has a little extra
+top and bottom padding. Toggle it off to return to the plain title list.
 
 ## Menus
 
@@ -176,6 +175,13 @@ Open notes across multiple tabs:
 - With only one tab open, the tab bar is hidden.
 - A tab with no note shows a placeholder prompting you to select one.
 
+## Refresh note
+
+The toolbar's **Refresh note** button reloads the current note from disk — handy
+if the file was changed by another program. If the open tab has unsaved changes,
+you'll get the same save/discard/cancel prompt as when closing a tab before the
+reload happens.
+
 ## Slugify
 
 The toolbar's **Slugify** button renames the current note from its title. It is
@@ -195,8 +201,10 @@ becomes `my-awesome-new-note.md`.
 | Close tab             | Ctrl+W            |
 | Next / previous tab   | Ctrl+Tab / Ctrl+Shift+Tab |
 | Jump to tab 1–9       | Alt+1 … Alt+9     |
+| Open File/Edit/View/Help menu | Alt+F / Alt+E / Alt+V / Alt+H |
 | Quit                  | Ctrl+Q            |
 
 There's also *Help → About* for version and project information.
 
 See [MAINTENANCE.md](MAINTENANCE.md) for architecture and maintainer notes.
+

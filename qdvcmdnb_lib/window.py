@@ -110,7 +110,7 @@ class NotebookWindow(Gtk.Window):
 
         # ---- File menu ----
         file_menu = Gtk.Menu()
-        file_item = Gtk.MenuItem(label="File")
+        file_item = Gtk.MenuItem.new_with_mnemonic("_File")
         file_item.set_submenu(file_menu)
 
         mi_new = self._icon_menu_item("New note", "document-new")
@@ -176,7 +176,7 @@ class NotebookWindow(Gtk.Window):
 
         # ---- Edit menu ----
         edit_menu = Gtk.Menu()
-        edit_item = Gtk.MenuItem(label="Edit")
+        edit_item = Gtk.MenuItem.new_with_mnemonic("_Edit")
         edit_item.set_submenu(edit_menu)
 
         mi_prefs = self._icon_menu_item("Preferences\u2026", "preferences-system")
@@ -187,7 +187,7 @@ class NotebookWindow(Gtk.Window):
 
         # ---- View menu ----
         view_menu = Gtk.Menu()
-        view_item = Gtk.MenuItem(label="View")
+        view_item = Gtk.MenuItem.new_with_mnemonic("_View")
         view_item.set_submenu(view_menu)
 
         self.mi_toolbar = Gtk.CheckMenuItem(label="Toolbar")
@@ -221,7 +221,7 @@ class NotebookWindow(Gtk.Window):
 
         # ---- Help menu ----
         help_menu = Gtk.Menu()
-        help_item = Gtk.MenuItem(label="Help")
+        help_item = Gtk.MenuItem.new_with_mnemonic("_Help")
         help_item.set_submenu(help_menu)
 
         mi_about = self._icon_menu_item("About", "help-about")
@@ -273,6 +273,15 @@ class NotebookWindow(Gtk.Window):
         self.btn_save.connect("clicked", self.on_save_note)
         toolbar.insert(self.btn_save, -1)
 
+        # Refresh note: reload the current note from disk (e.g. edited elsewhere).
+        self.btn_refresh = Gtk.ToolButton(icon_name="view-refresh")
+        self.btn_refresh.set_label("Refresh note")
+        self.btn_refresh.set_tooltip_text(
+            "Reload the current note from disk")
+        self.btn_refresh.set_sensitive(False)  # enabled only with a note open
+        self.btn_refresh.connect("clicked", self.on_refresh_note)
+        toolbar.insert(self.btn_refresh, -1)
+
         # Slugify: rename the active note from its level-1 heading. Enabled only
         # when the active tab's first line is a short (<32 char) H1.
         self.btn_slugify = Gtk.ToolButton(icon_name="insert-link")
@@ -283,7 +292,7 @@ class NotebookWindow(Gtk.Window):
         self.btn_slugify.connect("clicked", self.on_slugify)
         toolbar.insert(self.btn_slugify, -1)
 
-        toolbar.insert(Gtk.SeparatorToolItem(), -1)
+        toolbar.insert(self._toolbar_separator(), -1)
 
         # Card view toggle: when active, pane 2 shows each note as a small card
         # (bold title + date + first body line). Off by default.
@@ -293,10 +302,12 @@ class NotebookWindow(Gtk.Window):
         self.btn_cardview.set_tooltip_text(
             "Show notes as cards (title, date, first line)")
         self.btn_cardview.set_active(False)
+        # "Important" items keep their label beside the icon in BOTH_HORIZ mode.
+        self.btn_cardview.set_is_important(True)
         self.btn_cardview.connect("toggled", self.on_toggle_card_view)
         toolbar.insert(self.btn_cardview, -1)
 
-        toolbar.insert(Gtk.SeparatorToolItem(), -1)
+        toolbar.insert(self._toolbar_separator(), -1)
 
         # Read-only toggle. Pressed-in (active) means read-only; releasing it
         # enters edit mode. Applies across all tabs.
@@ -306,6 +317,7 @@ class NotebookWindow(Gtk.Window):
         self.btn_readonly.set_tooltip_text(
             "Read-only mode (release to edit)")
         self.btn_readonly.set_active(True)  # default: read-only
+        self.btn_readonly.set_is_important(True)
         self._readonly_handler = self.btn_readonly.connect(
             "toggled", self.on_toggle_read_only)
         toolbar.insert(self.btn_readonly, -1)
@@ -318,10 +330,17 @@ class NotebookWindow(Gtk.Window):
         self.btn_preview.set_tooltip_text(
             "Preview rendered markdown (read-only)")
         self.btn_preview.set_active(False)
+        self.btn_preview.set_is_important(True)
         self.btn_preview.connect("toggled", self.on_toggle_preview)
         toolbar.insert(self.btn_preview, -1)
 
         return toolbar
+
+    @staticmethod
+    def _toolbar_separator():
+        sep = Gtk.SeparatorToolItem()
+        sep.set_draw(True)  # ensure the divider line is actually drawn
+        return sep
 
     def _apply_toolbar_style(self):
         self.toolbar.set_style(self._toolbar_style_enum())
@@ -665,9 +684,11 @@ class NotebookWindow(Gtk.Window):
         self._update_save_sensitivity()
 
     def _update_save_sensitivity(self):
-        """(#4) Enable Save only when the active tab has unsaved changes."""
+        """Enable Save only when the active tab has unsaved changes; enable
+        Refresh whenever the active tab has a note open."""
         tab = self._active_tab()
         self.btn_save.set_sensitive(bool(tab and tab.note and tab.dirty))
+        self.btn_refresh.set_sensitive(bool(tab and tab.note))
 
     def _update_slugify_sensitivity(self):
         """
@@ -813,12 +834,14 @@ class NotebookWindow(Gtk.Window):
         """
         Build the cell markup at draw time. In list view it's just the title.
         In card view it's three lines: bold title, then the last-modified date
-        and the first body line in a smaller font. Those sub-lines use a lighter
-        grey when the row is selected (so they stay legible on the selection
-        highlight) and a darker grey otherwise.
+        and the first body line. The sub-lines use the same colour as the title
+        (so nothing clashes with the selection highlight) but are italicised and
+        slightly smaller to set them apart. Card rows also get a little extra
+        top/bottom padding.
         """
         title = _xml_escape(store[treeiter][0])
         if not self.card_view:
+            cell.set_property("ypad", 0)
             cell.set_property("markup", title)
             return
 
@@ -826,13 +849,11 @@ class NotebookWindow(Gtk.Window):
         date = _xml_escape(model.format_mtime_value(mtime))
         snippet = _xml_escape(store[treeiter][3])
 
-        selected = self.note_view.get_selection().iter_is_selected(treeiter)
-        grey = "#aaaaaa" if selected else "#666666"
-
-        sub = (f"\n<span size='small' foreground='{grey}'>{date}</span>"
+        sub = (f"\n<i><span size='small'>{date}</span></i>"
                if date else "")
-        sub += (f"\n<span size='small' foreground='{grey}'>{snippet}</span>"
+        sub += (f"\n<i><span size='small'>{snippet}</span></i>"
                 if snippet else "")
+        cell.set_property("ypad", 2)  # ~2px extra top & bottom in card view
         cell.set_property("markup", f"<b>{title}</b>{sub}")
 
     # ----------------------------------------------------------- editor -- #
@@ -994,6 +1015,21 @@ class NotebookWindow(Gtk.Window):
 
     def on_save_note(self, _widget):
         self._save_active()
+
+    def on_refresh_note(self, _widget):
+        """Reload the active tab's note from disk (e.g. changed elsewhere).
+        If the tab has unsaved changes, warn first (same prompt as closing)."""
+        tab = self._active_tab()
+        if tab is None or tab.note is None:
+            return
+        if self._maybe_warn_unsaved(tab) is False:
+            return  # user cancelled
+        note = model.Note(tab.note.path)
+        if not tab.load_note(note):
+            self._error_dialog(f"Could not reload note:\n{note.path}")
+            return
+        tab.highlight_search(self.search_query)
+        self.update_status()
 
     def on_slugify(self, _widget):
         tab = self._active_tab()

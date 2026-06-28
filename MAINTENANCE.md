@@ -309,7 +309,9 @@ Statusbar `Gtk.CheckMenuItem` toggles, a separator, then the three sort
 initial state (after `_confirm_close_all`); `on_toggle_toolbar` /
 `on_toggle_statusbar` flip `self.toolbar` / `self.statusbar_box` visibility (both
 checks default on). `on_preferences` opens the `PreferencesDialog`; `on_about`
-shows a `Gtk.AboutDialog`.
+shows a `Gtk.AboutDialog`. The four top-level items are created with
+`Gtk.MenuItem.new_with_mnemonic("_File"/"_Edit"/"_View"/"_Help")`, so Alt+F/E/V/H
+open the respective menus.
 
 Settings wiring: `__init__` calls `Settings.load()`, then after `_build_ui()`
 calls `_apply_editor_font()`, `_apply_code_font()`, `_apply_preview_font()`,
@@ -344,28 +346,37 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
 - Toolbar: built in `_build_toolbar`, style from `_toolbar_style_enum()`. Order:
   **New note**, **Save note** (`btn_save`, `document-save`; starts insensitive and
   is enabled only when the active tab is dirty — `_update_save_sensitivity()`,
-  called from `update_status`), **Slugify** (`btn_slugify`, insensitive unless the
-  active tab's live first line is a short H1 in edit mode, per
+  called from `update_status`), **Refresh note** (`btn_refresh`, `view-refresh`;
+  `on_refresh_note` reloads the active tab's note from disk via a fresh
+  `model.Note`, after `_maybe_warn_unsaved` — same prompt as closing a tab;
+  sensitive whenever a note is open), **Slugify** (`btn_slugify`, insensitive unless
+  the active tab's live first line is a short H1 in edit mode, per
   `_update_slugify_sensitivity()`), `|` separator, **Card view** (`btn_cardview`,
   `mail-attachment` icon, off by default — `on_toggle_card_view` flips
   `self.card_view`, calls `_apply_card_view()`, and reloads keeping selection), `|`
   separator, **Read-only** (`btn_readonly`, active by default), **Preview**
   (`btn_preview`, `document-page-setup` icon, off by default; locks the Read-only
-  toggle while active).
+  toggle while active). Separators are `SeparatorToolItem`s with `set_draw(True)`
+  (via `_toolbar_separator()`) so the divider line is visible. Card view,
+  Read-only, and Preview are marked `set_is_important(True)`: in the "beside"
+  toolbar style (`BOTH_HORIZ`) only important items show their label beside the
+  icon, so only those three are labelled while New/Save/Refresh/Slugify are
+  icon-only; in "below" style (`BOTH`) every item shows its label.
 - Note list (pane 2): a vertical box with a **search row** on top (a `Gtk.Entry`
   with a clear icon + a "Search" `Gtk.Button`) above a `Gtk.Stack`
   (`notelist_stack`). The stack has a "list" child (the scrolled
   `Gtk.ListStore(str, str, float, str)` = display name, full path, mtime,
   first-body-line snippet) and a "placeholder" child shown when the Subfolders
   parent is selected. The single cell renderer uses a **cell-data-func**
-  (`_note_cell_data`) rather than a static column, so the markup can depend on
-  selection state: list view shows the escaped title; card view shows a `<b>`-titled
-  block plus the date (`model.format_mtime_value`) and snippet in a small grey font,
-  with the sub-lines lightened (`#aaaaaa` vs `#666666`) when the row is selected so
-  they stay legible on the highlight. `_apply_card_view()` toggles
-  `set_grid_lines(HORIZONTAL/NONE)` so a thin separator line appears between cards
-  only in card view. `_reload_notelist` switches the stack back to "list". Search
-  filtering lives in `_reload_notelist`: `self.search_query` (None = off) is passed
+  (`_note_cell_data`): list view shows the escaped title; card view shows a
+  `<b>`-titled block plus the date (`model.format_mtime_value`) and snippet on the
+  next two lines, *italicised* and slightly smaller but in the **same colour** as
+  the title (so nothing clashes with the selection highlight), and sets the cell's
+  `ypad` to 2 for a little extra vertical padding (0 in list view).
+  `_apply_card_view()` toggles `set_grid_lines(HORIZONTAL/NONE)` so a thin separator
+  line appears between cards only in card view. `_reload_notelist` switches the
+  stack back to "list". Search filtering lives in `_reload_notelist`:
+  `self.search_query` (None = off) is passed
   to `model.filter_notes`, which matches case-insensitively against each note's name
   **and its full contents**; an empty result sets `self._search_no_results`, which
   `update_status` renders as "No search results found!" instead of the item count.
@@ -422,6 +433,9 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
 - Close tab (Ctrl+W / close button) → `on_close_tab` / the tab's close callback →
   `_close_tab`, a no-op at one tab.
 - Save → `_save_active` writes the active tab's content to its note.
+- Refresh note → `on_refresh_note` reloads the active note from disk (fresh
+  `model.Note`), after `_maybe_warn_unsaved` (cancel aborts the reload); re-applies
+  the current search highlight and refreshes the status.
 - Sort change → `on_sort_changed` reloads the list, keeping the active tab's note
   selected by path.
 - Preferences → `on_preferences` opens the dialog and calls `run_modal`; live
@@ -463,8 +477,9 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
 - The note-list cell uses a **cell-data-func** (`_note_cell_data`) that emits Pango
   markup, so any dynamic text in a card (title, date, first body line) must be
   XML-escaped — it uses `xml.sax.saxutils.escape`. Unescaped `<`/`&` from note
-  content would otherwise break rendering. The func also reads selection state to
-  pick the sub-line grey, so it re-runs on selection changes (GTK redraws the row).
+  content would otherwise break rendering. The card sub-lines are italicised and
+  share the title's colour (rather than a fixed grey) so they never clash with the
+  selection-highlight background.
 - Initial keyboard focus is set to the sidebar (`set_focus(self.sidebar_view)`)
   so the first toolbar button doesn't show a focus ring on startup.
 
@@ -512,3 +527,4 @@ Manual smoke test (needs GTK installed):
 3. Create, edit, save a note; reopen to confirm persistence.
 4. Switch sort modes; confirm ordering and that the open note stays selected.
 5. Edit without saving, then switch notes / quit; confirm the unsaved prompt.
+
