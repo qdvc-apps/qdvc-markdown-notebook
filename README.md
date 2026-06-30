@@ -197,7 +197,8 @@ Open notes across multiple tabs:
 - **Single-click** a note — opens it in the current tab (replacing its content).
 - **Right-click** a note for a menu: *Open in new tab*, *Move to subfolder*
   (a submenu of the workspace's subfolders; confirms before moving), *Copy full
-  path*, and *Show in file browser*. Several items carry an icon.
+  path*, and *Show in file browser*. Several items carry an icon. Right-clicking
+  does not change the current selection or open the note.
 - **Right-click a tab** for the same menu plus a *Locate in subfolders* item:
   clicking it reveals the note in the sidebar (pane 1) and note list (pane 2).
 - In **edit mode**, pressing **Tab** in the editor inserts four spaces.

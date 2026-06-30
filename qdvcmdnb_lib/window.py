@@ -1343,14 +1343,15 @@ class NotebookWindow(Gtk.Window):
         self._load_note_in_active_tab(model.Note(path))
 
     def on_notelist_button_press(self, _widget, event):
-        # Right-click (button 3) opens the context menu on the row under it.
+        # Right-click (button 3) opens the context menu on the row under it,
+        # WITHOUT changing the current selection (so right-clicking doesn't open
+        # the note in the active tab).
         if event.button != 3:
             return False
         path_info = self.note_view.get_path_at_pos(int(event.x), int(event.y))
         if path_info is None:
             return False
         path, _col, _cx, _cy = path_info
-        self.note_view.get_selection().select_path(path)
         treeiter = self.note_store.get_iter(path)
         note_path = self.note_store[treeiter][1]
 
@@ -1455,28 +1456,42 @@ class NotebookWindow(Gtk.Window):
                 "Move this note?",
                 f"\u201c{name}\u201d will be moved to \u201c{label}\u201d."):
             return
-        # If the note is open in a tab, move via that tab's Note so its state
-        # (path, title) updates in place; otherwise use a throwaway Note.
-        note = None
-        owning_tab = None
-        for t in self._tabs:
-            if t.note is not None and os.path.abspath(t.note.path) == \
-                    os.path.abspath(note_path):
-                note = t.note
-                owning_tab = t
-                break
-        if note is None:
-            note = model.Note(note_path)
+        # Find every open tab that points at this note (by old path) so we can
+        # update them to the new location after the move. Comparing by path
+        # rather than object identity is important: a tab may hold its own
+        # throwaway Note for the same file.
+        old_abs = os.path.abspath(note_path)
+        owning_tabs = [t for t in self._tabs
+                       if t.note is not None
+                       and os.path.abspath(t.note.path) == old_abs]
+
+        # Move on disk via a single Note (reused by the first owning tab if any,
+        # so its in-place path/name update is reflected there too).
+        note = owning_tabs[0].note if owning_tabs else model.Note(note_path)
         try:
             new_path = model.move_note(note, dest_folder)
         except OSError as exc:
             self._error_dialog(f"Could not move note:\n{exc}")
             return
-        if owning_tab is not None:
-            owning_tab._refresh_title()
+
+        # Point every owning tab at the new path and refresh its title. The
+        # buffer content is unchanged by a move, so we don't reload from disk
+        # (which also avoids any read at the now-nonexistent old path).
+        for t in owning_tabs:
+            t.note.path = new_path
+            t.note.name = os.path.basename(new_path)
+            t._refresh_title()
+
+        # Rebuild panes. Guard the note-list reselection so it does not trigger
+        # a reload of the active tab (which could otherwise read a stale path).
         self._reload_sidebar()
-        self._reload_notelist(select_path=new_path)
+        self._note_select_guard = True
+        try:
+            self._reload_notelist(select_path=new_path)
+        finally:
+            self._note_select_guard = False
         self.update_status()
+        self._refresh_outline()
 
     def _locate_note_in_panes(self, note_path):
         """
@@ -1682,9 +1697,38 @@ class NotebookWindow(Gtk.Window):
         dialog.set_program_name(APP_NAME)
         dialog.set_comments(
             "A three-pane markdown notebook for the MATE / GNOME2-era desktop.")
-        dialog.set_logo_icon_name("accessories-text-editor")
+        self._set_about_logo(dialog)
         dialog.run()
         dialog.destroy()
+
+    def _set_about_logo(self, dialog):
+        """
+        Give the About dialog the same icon the app is using: the custom icon
+        set when one is configured (a large PNG/SVG loaded as a pixbuf), the
+        installed themed name as a fallback, else the stock icon name.
+        """
+        files = icon_set_files(self.settings.icon_set_dir)
+        if files:
+            from gi.repository import GdkPixbuf
+            # Prefer the SVG, then the largest PNG, rendered at 64px.
+            source = files.get("scalable")
+            if source is None:
+                for size in sorted((k for k in files if isinstance(k, int)),
+                                   reverse=True):
+                    source = files[size]
+                    break
+            if source is not None:
+                try:
+                    pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_size(
+                        source, 64, 64)
+                    dialog.set_logo(pixbuf)
+                    return
+                except GLib.Error:
+                    pass
+            # Pixbuf load failed but a set exists: use the themed name we install.
+            dialog.set_logo_icon_name(APP_ICON_NAME)
+            return
+        dialog.set_logo_icon_name("accessories-text-editor")
 
     def on_sort_changed(self, widget, mode):
         if widget.get_active():

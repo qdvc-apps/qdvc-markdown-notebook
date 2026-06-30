@@ -366,7 +366,10 @@ Tab wiring:
   **Move to subfolder** (a submenu from `_build_move_submenu`), **Copy full path**,
   **Show in file browser**, several with icons. The tab variant passes
   `include_locate=True`, prepending **Locate in subfolders** (`_locate_note_in_panes`).
-  Move/locate are detailed under control flow below.
+  A pane-2 right-click reads the row under the pointer but **does not change the
+  selection** (the handler returns `True` to suppress GTK's default select), so
+  right-clicking a note never opens it in the active tab. Move/locate are detailed
+  under control flow below.
 - Quitting/closing the window runs `_confirm_close_all`, which prompts for *every*
   dirty tab before exit.
 
@@ -559,8 +562,12 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
 - Right-click a note (pane 2) or a tab label → a shared popup
   (`_build_note_context_menu`): "Open in new tab" (`_load_note_in_new_tab`),
   "Move to subfolder" (a submenu of `model.all_subfolders`; `_move_note_to`
-  confirms via `_confirm` then calls `model.move_note`, updating any owning tab's
-  title and reloading the sidebar + list), "Copy full path"
+  confirms via `_confirm` then calls `model.move_note`. It locates every open tab
+  on the note **by old path**, repoints each to the new path and refreshes the
+  title (no disk reload — a move doesn't change content, and this avoids reading
+  the now-gone old path), then rebuilds the sidebar and re-selects the note in
+  pane 2 with `_note_select_guard` set so the reselection doesn't re-trigger a
+  tab reload), "Copy full path"
   (`_copy_path_to_clipboard` via the `CLIPBOARD` selection), and "Show in file
   browser" (`_show_in_file_browser`, which converts the parent dir to a `file://`
   URI with `GLib.filename_to_uri` and opens it via `Gtk.show_uri_on_window`). The
@@ -604,7 +611,10 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
   selected by path, and persists `sort_mode` when *remember sort order* is on.
 - Preferences → `on_preferences` opens the dialog and calls `run_modal`; live
   changes preview via `_apply_preferences`, Save persists, Cancel reverts.
-- About → `on_about` shows a `Gtk.AboutDialog`.
+- About → `on_about` shows a `Gtk.AboutDialog`; `_set_about_logo` gives it the
+  custom icon set's image (SVG or largest PNG at 64px) when one is configured,
+  falling back to the installed themed name (`APP_ICON_NAME`) or the stock
+  `accessories-text-editor`.
 - Quit / window close → `_confirm_close_all` prompts for each dirty tab, then
   `_save_session()` records the workspace, open notes, and the sidebar/note-list
   selection for restore.
