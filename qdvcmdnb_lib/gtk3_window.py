@@ -53,6 +53,8 @@ from .gtk3_menubar import MenuBarMixin
 from .gtk3_toolbar import ToolbarMixin
 from .gtk3_panes import PanesMixin
 from .gtk3_actions import ActionsMixin
+from . import strings
+from .strings import Status, Menu
 
 
 class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
@@ -124,6 +126,14 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
 
     # ----------------------------------------------------------------- UI -- #
     def _build_ui(self):
+        # Assemble the whole window. A vertical Gtk.Box stacks menubar, toolbar,
+        # the pane area, and the status bar; self.add() puts it in the window
+        # (a Gtk.Window holds a single child). The four resizable panes are made
+        # with nested Gtk.Paned splitters: each Paned has two children separated
+        # by a draggable handle. pack1/pack2 are its left/right slots; resize
+        # controls whether that side grows when the window resizes, shrink
+        # whether it can be made smaller than its natural size. set_position sets
+        # the initial handle offset in pixels.
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(vbox)
 
@@ -305,11 +315,17 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         self._apply_read_only()
 
     def on_toggle_read_only(self, button):
+        # Toolbar button "toggled" handler. The guard flag is set while we mirror
+        # state between the button and the menu item (in _sync_toggle), so we
+        # ignore the echo it would otherwise cause. button.get_active() is the
+        # new pressed state. The matching on_menu_* handler does the same for the
+        # View-menu item; both funnel into the single _set_* entry point.
         if self._syncing_view_toggles:
             return
         self._set_read_only(button.get_active())
 
     def on_menu_toggle_read_only(self, item):
+        # View-menu CheckMenuItem counterpart of on_toggle_read_only.
         if self._syncing_view_toggles:
             return
         self._set_read_only(item.get_active())
@@ -329,16 +345,20 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         self._refresh_outline()
 
     def _set_preview(self, value):
+        # Single entry point for the preview toggle: update state, mirror both
+        # widgets (guarded), then apply across tabs.
         self.preview_mode = bool(value)
         self._sync_toggle(self.btn_preview, self.mi_preview, self.preview_mode)
         self._apply_preview()
 
     def on_toggle_preview(self, button):
+        # Toolbar "toggled" handler (see on_toggle_read_only for the guard).
         if self._syncing_view_toggles:
             return
         self._set_preview(button.get_active())
 
     def on_menu_toggle_preview(self, item):
+        # View-menu counterpart.
         if self._syncing_view_toggles:
             return
         self._set_preview(item.get_active())
@@ -355,17 +375,21 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         self._reload_notelist(select_path=keep)
 
     def on_toggle_card_view(self, button):
+        # Toolbar "toggled" handler (see on_toggle_read_only for the guard).
         if self._syncing_view_toggles:
             return
         self._set_card_view(button.get_active())
 
     def on_menu_toggle_card_view(self, item):
+        # View-menu counterpart.
         if self._syncing_view_toggles:
             return
         self._set_card_view(item.get_active())
 
     def _apply_card_view(self):
-        """Show thin horizontal separator lines between cards in card view."""
+        """Show thin horizontal separator lines between cards in card view.
+        set_grid_lines draws GTK's built-in tree grid lines (HORIZONTAL = lines
+        between rows; NONE = none)."""
         lines = (Gtk.TreeViewGridLines.HORIZONTAL if self.card_view
                  else Gtk.TreeViewGridLines.NONE)
         self.note_view.set_grid_lines(lines)
@@ -373,17 +397,21 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
 
     # --------------------------------------------------------- outline -- #
     def _set_outline(self, value):
+        # Single entry point for the outline toggle: update state, mirror both
+        # widgets (guarded), then show/hide + rebuild pane 4.
         self.outline_visible = bool(value)
         self._sync_toggle(self.btn_outline, self.mi_outline,
                           self.outline_visible)
         self._apply_outline_visibility()
 
     def on_toggle_outline(self, button):
+        # Toolbar "toggled" handler (see on_toggle_read_only for the guard).
         if self._syncing_view_toggles:
             return
         self._set_outline(button.get_active())
 
     def on_menu_toggle_outline(self, item):
+        # View-menu counterpart.
         if self._syncing_view_toggles:
             return
         self._set_outline(item.get_active())
@@ -401,6 +429,8 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
 
     # --------------------------------------------------------------- tabs -- #
     def _active_tab(self):
+        # Map the notebook's current page index to our parallel _tabs list.
+        # get_current_page returns -1 when there are no pages.
         idx = self.notebook.get_current_page()
         if idx < 0 or idx >= len(self._tabs):
             return None
@@ -492,13 +522,19 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
             self._refresh_outline()
 
     def _rebuild_recent_menu(self):
-        """Repopulate the File > Open Recent submenu from settings."""
+        """Repopulate the File > Open Recent submenu from settings.
+
+        We empty the existing Gtk.Menu (remove each child), then add either a
+        disabled "(none)" placeholder or one MenuItem per recent folder, binding
+        the folder string as an extra arg to the activate handler. show_all makes
+        the freshly added items visible.
+        """
         for child in self.recent_menu.get_children():
             self.recent_menu.remove(child)
 
         recents = self.settings.recent_folders
         if not recents:
-            placeholder = Gtk.MenuItem(label="(none)")
+            placeholder = Gtk.MenuItem(label=Menu.RECENT_NONE)
             placeholder.set_sensitive(False)
             self.recent_menu.append(placeholder)
         else:
@@ -509,7 +545,8 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         self.recent_menu.show_all()
 
     def _remember_folder(self, folder):
-        """Record a folder as recent, persist, and refresh the menu."""
+        """Record a folder as recent, persist, and refresh the menu. (settings
+        does the dedupe/cap; no GTK beyond the menu rebuild.)"""
         self.settings.add_recent_folder(folder)
         self.settings.save()
         self._rebuild_recent_menu()
@@ -517,30 +554,33 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
 
     # -------------------------------------------------------- status bar -- #
     def update_status(self):
-        # Bold mode indicator. Preview overrides the read-only/edit label.
+        # Refresh the footer. The bold mode label uses Pango markup (<b>…</b>)
+        # set via set_markup; the rest is plain text pushed onto the Gtk.Statusbar
+        # (pop the previous message, push the new one — a statusbar is a stack).
+        # Preview overrides the read-only/edit label.
         if self.preview_mode:
-            self.mode_label.set_markup("<b>Rendered Markdown preview</b>")
+            self.mode_label.set_markup(f"<b>{Status.MODE_PREVIEW}</b>")
         elif self.read_only:
-            self.mode_label.set_markup("<b>Read-only mode</b>")
+            self.mode_label.set_markup(f"<b>{Status.MODE_READ_ONLY}</b>")
         else:
-            self.mode_label.set_markup("<b>Edit mode</b>")
+            self.mode_label.set_markup(f"<b>{Status.MODE_EDIT}</b>")
 
         count = len(self.note_store)
         tab = self._active_tab()
         if tab and tab.note:
             sel = tab.note.display_name()
         else:
-            sel = "none"
+            sel = Status.SELECTED_NONE
         # When a search returns nothing, replace the item count with a notice.
         if self._search_no_results:
-            msg = f"No search results found!  |  Selected: {sel}"
+            msg = strings.status_no_results(sel)
         else:
-            msg = f"{count} item(s)  |  Selected: {sel}"
+            msg = strings.status_items(count, sel)
         if tab and tab.dirty:
             msg += "  *"
         if len(self._tabs) > 1:
-            msg += f"  |  Tab {self.notebook.get_current_page() + 1}" \
-                   f"/{len(self._tabs)}"
+            msg += strings.status_tab_position(
+                self.notebook.get_current_page() + 1, len(self._tabs))
         self.statusbar.pop(self._status_ctx)
         self.statusbar.push(self._status_ctx, msg)
         self._update_slugify_sensitivity()
@@ -572,8 +612,12 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
 
     # ------------------------------------------------------ folder logic -- #
     def open_folder(self, folder):
+        # Switch the app to a new working folder: validate it, store it, retitle
+        # the window (set_title updates the title bar), reset the sidebar
+        # selection to All Notes, repopulate panes 1 and 2 from disk, clear the
+        # active tab, and record the folder in the recent list.
         if not folder or not os.path.isdir(folder):
-            self._error_dialog(f"Not a folder:\n{folder}")
+            self._error_dialog(strings.Dialog.not_a_folder(folder))
             return
         self.root_folder = folder
         self.set_title(f"{APP_NAME} \u2014 {folder}")
@@ -588,6 +632,7 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         self._remember_folder(folder)
 
     def on_tab_switched(self, _notebook, _page, page_num):
+        # Notebook "switch-page" handler: page_num is the newly active tab index.
         # GTK fires this during construction too; guard via _tabs presence.
         if getattr(self, "_tabs", None):
             if 0 <= page_num < len(self._tabs):
@@ -596,9 +641,12 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
             self._refresh_outline()
 
     def on_new_tab(self, _widget):
+        # Menu/Ctrl+T handler → open a fresh empty tab and focus it.
         self._new_tab(focus=True)
 
     def on_close_tab(self, _widget):
+        # Menu/Ctrl+W handler → close the active tab (no-op at one tab; see
+        # _close_tab).
         tab = self._active_tab()
         if tab is not None:
             self._close_tab(tab)

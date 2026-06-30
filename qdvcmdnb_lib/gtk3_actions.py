@@ -25,6 +25,7 @@ from .config import (
 )
 from .settings import icon_set_files, APP_ICON_NAME
 from .gtk3_preferences import PreferencesDialog
+from .strings import APP_COMMENTS, Dialog as D
 
 
 class ActionsMixin:
@@ -32,6 +33,10 @@ class ActionsMixin:
 
     # --------------------------------------------------------- handlers -- #
     def on_sidebar_selection_changed(self, selection):
+        # Fired by the sidebar's selection object whenever the highlighted row
+        # changes. `selection.get_selected()` returns (model, iter); iter is None
+        # if nothing is selected. We read the node-kind (store column 2) to decide
+        # what pane 2 should show.
         model_, treeiter = selection.get_selected()
         if treeiter is None:
             return
@@ -53,6 +58,9 @@ class ActionsMixin:
             self._reload_notelist()
 
     def on_note_selection_changed(self, selection):
+        # Fired when the highlighted note in pane 2 changes. The guard flag lets
+        # other code move the selection programmatically without triggering a
+        # load (e.g. during reselection after a cancelled switch).
         if self._note_select_guard:
             return
         model_, treeiter = selection.get_selected()
@@ -68,9 +76,11 @@ class ActionsMixin:
         self._load_note_in_active_tab(model.Note(path))
 
     def on_notelist_button_press(self, _widget, event):
-        # Right-click (button 3) opens the context menu on the row under it,
-        # WITHOUT changing the current selection (so right-clicking doesn't open
-        # the note in the active tab).
+        # Raw mouse-click handler on pane 2. `event` is a Gdk.EventButton;
+        # event.button == 3 is the right mouse button. get_path_at_pos maps the
+        # click's (x, y) pixel coordinates to the row under it (or None). We open
+        # the context menu there but deliberately do NOT select the row, and
+        # return True to stop GTK's default handler (which would select it).
         if event.button != 3:
             return False
         path_info = self.note_view.get_path_at_pos(int(event.x), int(event.y))
@@ -88,7 +98,8 @@ class ActionsMixin:
         """
         Right-click on a tab label: show the same context menu as a pane-2
         right-click, plus a "Locate in subfolders" item at the top. No-op for a
-        tab with no note open (guarded in EditorTab).
+        tab with no note open (guarded in EditorTab). popup_at_pointer shows the
+        menu at the mouse position.
         """
         if tab.note is None:
             return
@@ -100,15 +111,19 @@ class ActionsMixin:
                                  tab=None):
         """
         Build the shared context menu for a note (used by both pane-2 right-click
-        and tab right-click). Several items carry leading icons. When
-        `include_locate` is True an extra "Locate in subfolders" item is added at
-        the top (used from a tab, where `tab` is that EditorTab) which reveals
-        the note in panes 1 and 2.
+        and tab right-click). A Gtk.Menu is a free-floating popup of MenuItems;
+        we connect each item's "activate" to a lambda capturing this note's path.
+        (The lambda's `_i` is the menu-item GTK passes the handler, which we
+        ignore.) show_all() makes the items visible; the caller pops it up.
+
+        Several items carry leading icons. When `include_locate` is True an extra
+        "Locate in subfolders" item is added at the top (used from a tab, where
+        `tab` is that EditorTab) which reveals the note in panes 1 and 2.
         """
         menu = Gtk.Menu()
 
         if include_locate:
-            item_locate = self._icon_menu_item("Locate in subfolders",
+            item_locate = self._icon_menu_item(D.LOCATE_IN_SUBFOLDERS,
                                                 "edit-find")
             item_locate.connect(
                 "activate",
@@ -116,7 +131,7 @@ class ActionsMixin:
             menu.append(item_locate)
             menu.append(Gtk.SeparatorMenuItem())
 
-        item_open = self._icon_menu_item("Open in new tab", "tab-new")
+        item_open = self._icon_menu_item(D.OPEN_IN_NEW_TAB, "tab-new")
         item_open.connect(
             "activate",
             lambda _i: self._load_note_in_new_tab(model.Note(note_path)))
@@ -124,7 +139,7 @@ class ActionsMixin:
 
         # "Move to subfolder" → a submenu listing every subfolder of the
         # workspace (plus the top level). Confirms before moving.
-        item_move = self._icon_menu_item("Move to subfolder", "folder-move")
+        item_move = self._icon_menu_item(D.MOVE_TO_SUBFOLDER, "folder-move")
         item_move.set_submenu(self._build_move_submenu(note_path, tab))
         # Only meaningful with a workspace open.
         item_move.set_sensitive(bool(self.root_folder))
@@ -132,12 +147,12 @@ class ActionsMixin:
 
         menu.append(Gtk.SeparatorMenuItem())
 
-        item_copy = self._icon_menu_item("Copy full path", "edit-copy")
+        item_copy = self._icon_menu_item(D.COPY_FULL_PATH, "edit-copy")
         item_copy.connect("activate",
                           lambda _i: self._copy_path_to_clipboard(note_path))
         menu.append(item_copy)
 
-        item_browse = self._icon_menu_item("Show in file browser",
+        item_browse = self._icon_menu_item(D.SHOW_IN_FILE_BROWSER,
                                            "system-file-manager")
         item_browse.connect("activate",
                             lambda _i: self._show_in_file_browser(note_path))
@@ -147,10 +162,17 @@ class ActionsMixin:
         return menu
 
     def _build_move_submenu(self, note_path, tab):
-        """Submenu of destination subfolders for "Move to subfolder"."""
+        """Submenu of destination subfolders for "Move to subfolder".
+
+        One disabled placeholder item if no workspace is open; otherwise one
+        MenuItem per subfolder (from model.all_subfolders). The folder the note
+        already lives in is greyed out (set_sensitive(False)). The lambda binds
+        `d`/`lbl` as default args so each item captures its own values rather
+        than the loop's last iteration.
+        """
         submenu = Gtk.Menu()
         if not self.root_folder:
-            mi = Gtk.MenuItem(label="(open a workspace first)")
+            mi = Gtk.MenuItem(label=D.MOVE_SUBMENU_NO_WORKSPACE)
             mi.set_sensitive(False)
             submenu.append(mi)
             submenu.show_all()
@@ -160,7 +182,7 @@ class ActionsMixin:
         for rel in model.all_subfolders(self.root_folder):
             dest = (self.root_folder if rel == ""
                     else os.path.join(self.root_folder, rel))
-            label = "(top level)" if rel == "" else rel
+            label = D.MOVE_SUBMENU_TOP_LEVEL if rel == "" else rel
             mi = Gtk.MenuItem(label=label)
             # Disable the folder the note already lives in.
             if os.path.abspath(dest) == cur_dir:
@@ -175,11 +197,15 @@ class ActionsMixin:
         return submenu
 
     def _move_note_to(self, note_path, dest_folder, label, tab):
-        """Confirm, then move the note into `dest_folder` and refresh UI."""
+        """Confirm, then move the note into `dest_folder` and refresh UI.
+
+        Disk work is delegated to model.move_note; this method handles the GTK
+        side: the confirm dialog, updating any open tab that shows this file, and
+        rebuilding panes 1 and 2.
+        """
         name = os.path.basename(note_path)
-        if not self._confirm(
-                "Move this note?",
-                f"\u201c{name}\u201d will be moved to \u201c{label}\u201d."):
+        if not self._confirm(D.MOVE_TITLE,
+                             D.confirm_move_body(name, label)):
             return
         # Find every open tab that points at this note (by old path) so we can
         # update them to the new location after the move. Comparing by path
@@ -196,7 +222,7 @@ class ActionsMixin:
         try:
             new_path = model.move_note(note, dest_folder)
         except OSError as exc:
-            self._error_dialog(f"Could not move note:\n{exc}")
+            self._error_dialog(D.err_move(exc))
             return
 
         # Point every owning tab at the new path and refresh its title. The
@@ -248,27 +274,38 @@ class ActionsMixin:
         self._reload_notelist(select_path=note_path)
 
     def _copy_path_to_clipboard(self, path):
+        # The clipboard is a shared system object; we fetch the standard
+        # CLIPBOARD selection, set its text (-1 = "string is NUL-terminated, use
+        # full length"), and store() so the text survives after the app exits.
         clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
         clipboard.set_text(path, -1)
         clipboard.store()
 
     def _show_in_file_browser(self, path):
-        """Open the file's containing folder in the default file manager."""
+        """Open the file's containing folder in the default file manager.
+
+        GTK launches the desktop's preferred handler for a URI;
+        filename_to_uri turns a filesystem path into a file:// URI, and
+        show_uri_on_window asks the desktop to open it (the folder, here).
+        """
         folder = os.path.dirname(path)
         uri = GLib.filename_to_uri(folder, None)
         try:
             Gtk.show_uri_on_window(self, uri, Gdk.CURRENT_TIME)
         except GLib.Error as exc:
-            self._error_dialog(f"Could not open file browser:\n{exc}")
+            self._error_dialog(D.err_file_browser(exc))
 
     def on_new_note(self, _widget):
+        # Toolbar/menu "New note" handler. Creating files is disabled in
+        # read-only mode and without a workspace; otherwise we create an empty
+        # note (via the model), refresh the list, open it, and focus the editor
+        # so the user can type immediately. grab_focus moves keyboard focus to a
+        # widget.
         if self.read_only:
-            self._error_dialog(
-                "Read-only mode is on. Release the Read-only button to make "
-                "changes.")
+            self._error_dialog(D.READ_ONLY_NOTICE)
             return
         if not self.root_folder:
-            self._error_dialog("Open a working folder first (Ctrl+O).")
+            self._error_dialog(D.NO_WORKSPACE)
             return
         # Target folder = the selected subfolder if one is selected, else root.
         if self.current_node == NODE_SUBFOLDER and self.current_subfolder:
@@ -279,7 +316,7 @@ class ActionsMixin:
         try:
             path = model.create_empty_note(target_dir)
         except OSError as exc:
-            self._error_dialog(f"Could not create note:\n{exc}")
+            self._error_dialog(D.err_create(exc))
             return
         self._reload_notelist(select_path=path)
         self._load_note_in_active_tab(model.Note(path))
@@ -288,11 +325,13 @@ class ActionsMixin:
             tab.text_view.grab_focus()
 
     def on_save_note(self, _widget):
+        # Thin toolbar/menu handler → the shared save routine.
         self._save_active()
 
     def on_refresh_note(self, _widget):
         """Reload the active tab's note from disk (e.g. changed elsewhere).
-        If the tab has unsaved changes, warn first (same prompt as closing)."""
+        If the tab has unsaved changes, warn first (same prompt as closing).
+        No GTK specifics beyond delegating to the tab and the error dialog."""
         tab = self._active_tab()
         if tab is None or tab.note is None:
             return
@@ -300,12 +339,15 @@ class ActionsMixin:
             return  # user cancelled
         note = model.Note(tab.note.path)
         if not tab.load_note(note):
-            self._error_dialog(f"Could not reload note:\n{note.path}")
+            self._error_dialog(D.err_reload(note.path))
             return
         tab.highlight_search(self.search_query)
         self.update_status()
 
     def on_slugify(self, _widget):
+        # Rename the active note to a slug derived from its H1 (model does the
+        # slug logic + rename). We confirm first, then refresh the tab title and
+        # the list. No GTK widgets here beyond the confirm/error dialogs.
         tab = self._active_tab()
         if tab is None or tab.note is None:
             return
@@ -318,15 +360,14 @@ class ActionsMixin:
 
         old_name = tab.note.name
         new_name = slug + ".md"
-        if not self._confirm(
-                "Rename this note?",
-                f"\u201c{old_name}\u201d will be renamed to \u201c{new_name}\u201d."):
+        if not self._confirm(D.RENAME_TITLE,
+                             D.confirm_rename_body(old_name, new_name)):
             return
 
         try:
             new_path = model.rename_note(tab.note, slug)
         except OSError as exc:
-            self._error_dialog(f"Could not rename note:\n{exc}")
+            self._error_dialog(D.err_rename(exc))
             return
         # tab.note was updated in place by rename_note; refresh title + list.
         tab._refresh_title()
@@ -334,14 +375,18 @@ class ActionsMixin:
         self.update_status()
 
     def on_open_folder(self, _widget):
+        # Show a folder picker. Gtk.FileChooserDialog is a modal dialog; we add
+        # Cancel/Open buttons paired with response codes, run() blocks until the
+        # user responds and returns that code, then we must destroy() the dialog
+        # ourselves. get_filename() yields the chosen folder path.
         dialog = Gtk.FileChooserDialog(
-            title="Open Working Folder",
+            title=D.OPEN_FOLDER_TITLE,
             parent=self,
             action=Gtk.FileChooserAction.SELECT_FOLDER,
         )
         dialog.add_buttons(
-            "_Cancel", Gtk.ResponseType.CANCEL,
-            "_Open", Gtk.ResponseType.OK,
+            D.BTN_CANCEL, Gtk.ResponseType.CANCEL,
+            D.BTN_OPEN, Gtk.ResponseType.OK,
         )
         if self.root_folder:
             dialog.set_current_folder(self.root_folder)
@@ -353,8 +398,11 @@ class ActionsMixin:
             dialog.destroy()
 
     def on_open_recent(self, _widget, folder):
+        # Open a folder chosen from the recent-workspaces submenu. The `folder`
+        # value was bound when the menu item was connected. If it's gone, drop it
+        # from the list and warn.
         if not os.path.isdir(folder):
-            self._error_dialog(f"Folder no longer exists:\n{folder}")
+            self._error_dialog(D.recent_missing(folder))
             # Drop the dead entry and refresh.
             self.settings.recent_folders = [
                 f for f in self.settings.recent_folders if f != folder
@@ -367,12 +415,16 @@ class ActionsMixin:
         self.open_folder(folder)
 
     def on_preferences(self, _widget):
+        # Construct the Preferences dialog and run it modally. on_apply is a
+        # callback the dialog invokes for live preview as the user changes
+        # settings (see gtk3_preferences.py / _apply_preferences below).
         dialog = PreferencesDialog(self, self.settings,
                                    on_apply=self._apply_preferences)
         dialog.run_modal()
 
     def _apply_preferences(self):
-        """Re-theme tabs and toolbar after a preferences change."""
+        """Re-theme tabs and toolbar after a preferences change. Pure delegation
+        to the window's apply-* helpers; no GTK directly here."""
         self._apply_editor_font()
         self._apply_code_font()
         self._apply_preview_font()
@@ -382,10 +434,11 @@ class ActionsMixin:
         self._apply_icon_set()
 
     def on_about(self, _widget):
+        # Gtk.AboutDialog is a ready-made standard dialog; we set its program
+        # name + description, give it a logo, then run/destroy it like any modal.
         dialog = Gtk.AboutDialog(transient_for=self, modal=True)
         dialog.set_program_name(APP_NAME)
-        dialog.set_comments(
-            "A three-pane markdown notebook for the MATE / GNOME2-era desktop.")
+        dialog.set_comments(APP_COMMENTS)
         self._set_about_logo(dialog)
         dialog.run()
         dialog.destroy()
@@ -395,6 +448,12 @@ class ActionsMixin:
         Give the About dialog the same icon the app is using: the custom icon
         set when one is configured (a large PNG/SVG loaded as a pixbuf), the
         installed themed name as a fallback, else the stock icon name.
+
+        A GdkPixbuf is an in-memory image; new_from_file_at_size loads and scales
+        a file in one step. set_logo takes a pixbuf, set_logo_icon_name takes a
+        themed-icon name instead. The import is local because GdkPixbuf is only
+        needed on this rarely-hit path. ("accessories-text-editor" is the stock
+        fallback icon — left inline as it is an icon name, not display text.)
         """
         files = icon_set_files(self.settings.icon_set_dir)
         if files:
@@ -420,6 +479,10 @@ class ActionsMixin:
         dialog.set_logo_icon_name("accessories-text-editor")
 
     def on_sort_changed(self, widget, mode):
+        # Fired by a sort RadioMenuItem's "toggled". A radio group fires twice
+        # (the one switching off and the one switching on), so we act only on the
+        # item that became active. `mode` is the SORT_* value bound at connect
+        # time. We keep the current note selected across the reload.
         if widget.get_active():
             self.sort_mode = mode
             # Persist the choice when "remember sort order" is enabled.
@@ -434,7 +497,8 @@ class ActionsMixin:
         """
         After a cancelled note switch, restore the list selection to whatever
         the active tab currently holds (or clear it). Guarded so the
-        selection-changed handler does not re-trigger a load.
+        selection-changed handler does not re-trigger a load. unselect_all clears
+        the highlight; select_iter re-highlights the matching row.
         """
         tab = self._active_tab()
         target = tab.note.path if (tab and tab.note) else None
@@ -451,12 +515,17 @@ class ActionsMixin:
             self._note_select_guard = False
 
     def on_quit(self, _widget):
+        # Menu "Quit" handler. Confirm any unsaved tabs first; save the session,
+        # then end the GTK event loop (Gtk.main_quit stops Gtk.main()).
         if self._confirm_close_all() is False:
             return
         self._save_session()
         Gtk.main_quit()
 
     def _on_delete_event(self, _widget, _event):
+        # "delete-event" fires when the user clicks the window-manager close
+        # button. Returning True *stops* the close (we use that to cancel);
+        # returning False lets GTK proceed to destroy the window.
         if self._confirm_close_all() is False:
             return True  # cancel close
         self._save_session()
@@ -467,7 +536,8 @@ class ActionsMixin:
         Persist the current workspace, the set of open notes, and the sidebar /
         note-list selection so they can be restored next launch (only meaningful
         when "restore session" is on, but we record it regardless so toggling the
-        option later just works).
+        option later just works). All disk work is in settings; no GTK except
+        reading the current selection.
         """
         open_notes = [tab.note.path for tab in self._tabs
                       if tab.note is not None]
@@ -496,6 +566,10 @@ class ActionsMixin:
         If `tab` has unsaved changes, ask the user. Returns False if the pending
         action should be cancelled, True otherwise. A None tab is treated as
         clean (nothing to lose).
+
+        Gtk.MessageDialog is a prebuilt dialog; buttons=NONE lets us add our own
+        three buttons with add_buttons (label, response-code pairs). run() blocks
+        and returns the chosen response code; we then destroy the dialog.
         """
         if tab is None or not tab.dirty or not tab.note:
             return True
@@ -504,12 +578,12 @@ class ActionsMixin:
             modal=True,
             message_type=Gtk.MessageType.QUESTION,
             buttons=Gtk.ButtonsType.NONE,
-            text=f"Save changes to \u201c{tab.note.display_name()}\u201d?",
+            text=D.save_changes_prompt(tab.note.display_name()),
         )
         dialog.add_buttons(
-            "Discard", Gtk.ResponseType.NO,
-            "_Cancel", Gtk.ResponseType.CANCEL,
-            "_Save", Gtk.ResponseType.YES,
+            D.BTN_DISCARD, Gtk.ResponseType.NO,
+            D.BTN_CANCEL, Gtk.ResponseType.CANCEL,
+            D.BTN_SAVE, Gtk.ResponseType.YES,
         )
         resp = dialog.run()
         dialog.destroy()
@@ -522,6 +596,8 @@ class ActionsMixin:
         return False  # cancelled
 
     def _error_dialog(self, message):
+        # A simple modal error popup with a single OK button. message_type=ERROR
+        # gives it the error icon/styling.
         dialog = Gtk.MessageDialog(
             transient_for=self,
             modal=True,
@@ -533,7 +609,12 @@ class ActionsMixin:
         dialog.destroy()
 
     def _confirm(self, primary, secondary=None):
-        """Yes/No confirmation dialog. Returns True if the user confirmed."""
+        """Yes/No confirmation dialog. Returns True if the user confirmed.
+
+        OK_CANCEL gives the two standard buttons; format_secondary_text adds a
+        smaller explanatory line below the bold primary text. The OK response
+        maps to True.
+        """
         dialog = Gtk.MessageDialog(
             transient_for=self,
             modal=True,
@@ -554,11 +635,10 @@ class ActionsMixin:
         possible. Open tabs are left untouched. No-op without a workspace.
         """
         if not self.root_folder:
-            self._error_dialog("Open a working folder first (Ctrl+O).")
+            self._error_dialog(D.NO_WORKSPACE)
             return
         if not os.path.isdir(self.root_folder):
-            self._error_dialog(
-                f"Working folder no longer exists:\n{self.root_folder}")
+            self._error_dialog(D.workspace_missing(self.root_folder))
             return
         # Preserve the pane-2 selection by path across the rebuild.
         sel = self.note_view.get_selection()
@@ -571,7 +651,11 @@ class ActionsMixin:
         self.update_status()
 
     def on_close_workspace(self, _widget):
-        """Close the current workspace, returning to the empty initial state."""
+        """Close the current workspace, returning to the empty initial state.
+
+        Clears both tree stores and resets state; set_title updates the window
+        title bar; set_text("") empties the search box.
+        """
         if self._confirm_close_all() is False:
             return
         self.root_folder = None
@@ -591,15 +675,19 @@ class ActionsMixin:
 
     # ------------------------------------------------------- view toggles -- #
     def on_toggle_toolbar(self, item):
+        # CheckMenuItem "toggled" handler: show/hide the toolbar widget to match
+        # the tick state (get_active()). set_visible hides without destroying.
         self.toolbar.set_visible(item.get_active())
 
     def on_toggle_statusbar(self, item):
+        # Same pattern for the status-bar strip.
         self.statusbar_box.set_visible(item.get_active())
 
 
     # ------------------------------------------------------------ search -- #
     def on_search(self, _widget):
-        """Run the search from the entry's current text (ENTER or button)."""
+        """Run the search from the entry's current text (ENTER or button).
+        get_text() reads the entry; we store the query and reload pane 2."""
         text = self.search_entry.get_text().strip()
         # An empty box means no filter.
         self.search_query = text or None
@@ -607,7 +695,8 @@ class ActionsMixin:
         self._apply_search_highlight()
 
     def on_search_icon_press(self, entry, icon_pos, _event):
-        """Clear icon pressed: empty the box and drop the filter."""
+        """Clear icon pressed: empty the box and drop the filter. GTK passes
+        which icon was pressed (primary/secondary); ours is the secondary one."""
         if icon_pos == Gtk.EntryIconPosition.SECONDARY:
             entry.set_text("")
             self.search_query = None
@@ -616,7 +705,8 @@ class ActionsMixin:
 
     def _apply_search_highlight(self):
         """(#5) Highlight the current search term in the active tab's document.
-        A cleared search removes the highlight."""
+        A cleared search removes the highlight. The tab owns the actual
+        text-buffer tagging."""
         tab = self._active_tab()
         if tab is not None:
             tab.highlight_search(self.search_query)
@@ -624,31 +714,37 @@ class ActionsMixin:
 
     # ----------------------------------------------------------- editor -- #
     def _load_note_in_active_tab(self, note):
+        # Load `note` into the current tab (creating one if none exists), then
+        # re-apply the search highlight and refresh status + outline. The tab
+        # does the actual file read; we just surface errors.
         tab = self._active_tab()
         if tab is None:
             tab = self._new_tab(focus=True)
         if not tab.load_note(note):
-            self._error_dialog(f"Could not open note:\n{note.path}")
+            self._error_dialog(D.err_open(note.path))
             return
         tab.highlight_search(self.search_query)
         self.update_status()
         self._refresh_outline()
 
     def _load_note_in_new_tab(self, note):
+        # Always open `note` in a fresh tab (used by "Open in new tab").
         tab = self._new_tab(focus=True)
         if not tab.load_note(note):
-            self._error_dialog(f"Could not open note:\n{note.path}")
+            self._error_dialog(D.err_open(note.path))
             return
         tab.highlight_search(self.search_query)
         self.update_status()
         self._refresh_outline()
 
     def _save_active(self):
+        # Save the active tab's note to disk (the tab.save() does the write).
+        # Returns True on success so callers can chain on it.
         tab = self._active_tab()
         if tab is None or not tab.note:
             return False
         if not tab.save():
-            self._error_dialog(f"Could not save note:\n{tab.note.path}")
+            self._error_dialog(D.err_save(tab.note.path))
             return False
         self.update_status()
         return True

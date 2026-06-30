@@ -1,5 +1,5 @@
 """
-editortab.py — a single editor tab for QDVC Markdown Notebook.
+gtk3_editortab.py — a single editor tab for QDVC Markdown Notebook (GTK3).
 
 Each EditorTab owns its own Gtk.TextView, buffer, highlighter, and the note (if
 any) currently open in it, plus the per-tab dirty/loading flags that used to
@@ -7,6 +7,8 @@ live directly on the window. The window holds a Gtk.Notebook of these.
 
 The tab label is a small horizontal box with a title and a close button, in the
 style of Caja / typical GTK file managers.
+
+User-facing text comes from qdvcmdnb_lib.strings (Editor namespace).
 """
 
 import os
@@ -19,8 +21,11 @@ from gi.repository import Gtk, Pango, GLib  # noqa: E402
 from . import model
 from . import pango_markdown
 from .gtk3_highlighter import MarkdownHighlighter
+from .strings import Editor as S
 
-UNTITLED_LABEL = "Untitled"
+# Backwards-compatible alias: this used to be a module constant. It now points
+# at the centralised string so existing references keep working.
+UNTITLED_LABEL = S.UNTITLED
 MAX_TAB_TITLE = 12  # default characters before truncation (configurable in
                     # Preferences; the window passes the user's choice in)
 TAB_SPACES = 4      # spaces a Tab key expands to in edit mode
@@ -133,7 +138,7 @@ class EditorTab:
         close_btn.set_focus_on_click(False)
         close_btn.add(Gtk.Image.new_from_icon_name(
             "window-close", Gtk.IconSize.MENU))
-        close_btn.set_tooltip_text("Close tab")
+        close_btn.set_tooltip_text(S.CLOSE_TAB_TIP)
         close_btn.connect("clicked", lambda _b: self._on_close(self))
 
         self.tab_label.pack_start(self._title_event_box, True, True, 0)
@@ -161,8 +166,8 @@ class EditorTab:
         box.set_halign(Gtk.Align.CENTER)
         label = Gtk.Label()
         label.set_markup(
-            "<span size='large' foreground='#888888'>"
-            "Select a note to start reading or editing</span>")
+            f"<span size='large' foreground='#888888'>"
+            f"{S.EMPTY_PLACEHOLDER}</span>")
         box.add(label)
         return box
 
@@ -220,24 +225,34 @@ class EditorTab:
         self._refresh_title()
 
     def apply_font(self, font_desc_str):
+        # Set the editor body font. override_font takes a Pango.FontDescription
+        # parsed from a string like "monospace 11".
         self.text_view.override_font(Pango.FontDescription(font_desc_str))
 
     def apply_code_font(self, font_desc_str):
+        # Change the font used for code spans/blocks. The highlighter applies it
+        # to the editor's code tags; if previewing, re-render so the preview
+        # picks it up too.
         self._code_font = font_desc_str
         self.highlighter.set_code_font(font_desc_str)
         if self.preview:
             self._render_preview()
 
     def apply_preview_font(self, font_desc_str):
-        """Body font for the rendered-markdown preview (code uses code_font)."""
+        """Body font for the rendered-markdown preview (code uses code_font).
+        Stored so a later re-render keeps it; override_font sets it now."""
         self._preview_font = font_desc_str
         self.preview_view.override_font(Pango.FontDescription(font_desc_str))
 
     def apply_editor_line_spacing(self, pixels):
+        # Extra vertical space in the editor: set_pixels_below_lines adds space
+        # after each paragraph; set_pixels_inside_wrap adds it between the
+        # wrapped rows of one long line.
         self.text_view.set_pixels_below_lines(int(pixels))
         self.text_view.set_pixels_inside_wrap(int(pixels))
 
     def apply_preview_line_spacing(self, pixels):
+        # Same two spacing knobs, applied to the preview view.
         self.preview_view.set_pixels_below_lines(int(pixels))
         self.preview_view.set_pixels_inside_wrap(int(pixels))
 
@@ -256,6 +271,11 @@ class EditorTab:
         self._apply_search_highlight()
 
     def _apply_search_highlight(self):
+        # Re-tag the buffer for the stored search term. A Gtk.TextBuffer marks up
+        # ranges with "tags"; we first remove our search tag from the whole
+        # buffer (get_bounds gives start/end iters), then walk the lowercased
+        # text with str.find and apply_tag over each match. get_iter_at_offset
+        # converts a character offset into a TextIter (a position handle).
         buf = self.text_buffer
         start, end = buf.get_bounds()
         buf.remove_tag(self._search_tag, start, end)
@@ -274,6 +294,8 @@ class EditorTab:
             idx = hay.find(needle, idx + len(needle))
 
     def get_content(self):
+        # Return the editor's full text. A TextBuffer is addressed by iters;
+        # get_text(start, end, include_hidden) returns the string between them.
         start = self.text_buffer.get_start_iter()
         end = self.text_buffer.get_end_iter()
         return self.text_buffer.get_text(start, end, True)
@@ -344,12 +366,18 @@ class EditorTab:
         return True
 
     def title_text(self):
+        # The untruncated tab title: the note's display name, or the "Untitled"
+        # placeholder for an empty tab. (No GTK here.)
         if self.note:
             return self.note.display_name()
         return UNTITLED_LABEL
 
     # --------------------------------------------------------- internal -- #
     def _buffer_changed(self, _buffer):
+        # The TextBuffer's "changed" signal handler: fires on every edit. We
+        # ignore changes made during a programmatic load (_loading guard);
+        # otherwise mark the tab dirty, re-run highlighting/search tagging,
+        # refresh the title (to show the * marker), and notify the window.
         if self._loading:
             return
         self.dirty = True
@@ -359,6 +387,9 @@ class EditorTab:
         self._on_changed(self)
 
     def _refresh_title(self):
+        # Recompute the tab label: truncate the title past the configured limit
+        # (adding an ellipsis), prefix "*" when dirty, and set the label text +
+        # a tooltip showing the full file path (or a placeholder when unsaved).
         title = self.title_text()
         limit = getattr(self, "_tab_title_length", MAX_TAB_TITLE)
         if len(title) > limit:
@@ -367,4 +398,4 @@ class EditorTab:
             title = "*" + title
         self._title_label.set_text(title)
         self._title_label.set_tooltip_text(
-            self.note.path if self.note else "Unsaved note")
+            self.note.path if self.note else S.UNSAVED_TOOLTIP)

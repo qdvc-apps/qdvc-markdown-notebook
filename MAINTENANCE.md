@@ -22,6 +22,7 @@ qdvcmdnb_lib/
     model.py                     # data layer: Note + filesystem + disk I/O + outline parse
     settings.py                  # persistent user settings (YAML) + icon-set/.desktop install
     pango_markdown.py            # Markdown → Pango-markup string renderer (no GTK widget)
+    strings.py                   # all user-facing UI text, in one place (for i18n)
     # ---- GTK3 view/controller (prefaced gtk3_) ----
     gtk3_highlighter.py          # MarkdownHighlighter (GTK TextBuffer tagging)
     gtk3_editortab.py            # EditorTab: one tab's editor widget + state
@@ -78,8 +79,8 @@ highlighting is done with regexes against a `Gtk.TextBuffer` and tag table.
 ## 3. Architecture
 
 The modules group into the **GTK-free core** — `config` (§3.0), `settings`
-(§3.0a), `pango_markdown` (§3.1a) and `model` (§3.2) — and the **GTK3
-view/controller**, all `gtk3_`-prefixed: `gtk3_highlighter` (§3.1),
+(§3.0a), `pango_markdown` (§3.1a), `strings` (§3.1b) and `model` (§3.2) — and the
+**GTK3 view/controller**, all `gtk3_`-prefixed: `gtk3_highlighter` (§3.1),
 `gtk3_editortab` (§3.2a), `gtk3_preferences` (§3.2b) and the `NotebookWindow`
 mixins (§3.3). The subsection numbers below are historical labels, not a strict
 layer ordering. The core imports no GTK and is unit-testable headless; the GTK3
@@ -183,6 +184,23 @@ apostrophe can't break the markup. All text is XML-escaped first, and code is
 escaped but not further interpreted. The output is always well-formed markup. Pure
 text→text, no GTK, so it is unit-testable. Deliberately lightweight (same "good
 enough" philosophy as the highlighter), not a full CommonMark parser.
+
+### 3.1b `strings.py` — UI text catalogue (core; no GTK)
+Every user-facing string the GTK layer displays lives here, so a future
+translation pass has a single file to work from. Strings are grouped under small
+namespace classes — `Menu`, `Toolbar`, `Sidebar`, `Editor`, `Status`, `Prefs`,
+`Dialog` (never instantiated, just used as `Menu.FILE` etc.). Strings that embed
+runtime values are exposed as functions (e.g. `status_items(count, selected)`,
+`Dialog.confirm_move_body(name, dest)`, `Dialog.err_open(path)`) so the
+`.format`/f-string — and therefore the word order — stays in this file where a
+translator controls it, not at the call site. `APP_NAME` keeps living in
+`config.py` (it doubles as the WM/program identity) and is re-exported here as a
+convenience. Two purely presentational literals are intentionally **not**
+centralised: the title-truncation ellipsis and the em-dash in the window title
+(punctuation, not translatable phrases). Migration path to gettext: wrap the
+literals in `_()` and install a translation domain; call sites are unaffected
+because they already reference these names. The `gtk3_` modules each
+`from .strings import <Namespace>` and use the constants/functions.
 
 ### 3.2 `model.py` — data layer (core; no GTK)
 - `Note` — a thin wrapper over a file path; caches `name` and `mtime`.
@@ -731,6 +749,11 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
   silently keeps one). A method may freely call another defined in a different
   mixin — they all resolve on `self`. Keep new methods in the mixin matching their
   concern (menu/toolbar/panes/actions) or in the window core for lifecycle/state.
+- **New user-facing text goes in `strings.py`, not inline.** Add a constant to
+  the right namespace (or a function if it interpolates values) and reference it
+  from the `gtk3_` code. The two deliberate exceptions are pure punctuation (the
+  truncation ellipsis and the window-title em-dash). Icon names, Pango markup
+  tags, and `config.SORT_*`/`NODE_*` identifiers are not UI text and stay put.
 
 ## 7. Suggested next features
 
@@ -752,16 +775,21 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
 - Outline could highlight the heading nearest the cursor as you scroll/edit
   (currently it only jumps on click).
 - Experimental **GTK4 view** alongside the GTK3 one. The core modules (`config`,
-  `model`, `settings`, `pango_markdown`) are already GTK-free, so a parallel
-  `gtk4_*` module set could be written against them and selected at launch (e.g.
-  a `ui_toolkit` setting in `config.yml`, surfaced in Preferences). The entry
-  point would import `gtk4_window` vs `gtk3_window` based on that setting.
+  `model`, `settings`, `pango_markdown`, `strings`) are already GTK-free, so a
+  parallel `gtk4_*` module set could be written against them and selected at
+  launch (e.g. a `ui_toolkit` setting in `config.yml`, surfaced in Preferences).
+  The entry point would import `gtk4_window` vs `gtk3_window` based on that
+  setting. A GTK4 view would reuse `strings.py` verbatim.
+- **Translations (i18n).** `strings.py` already centralises every UI string. To
+  ship translations, wrap each literal in a gettext `_()` and install a domain
+  (`gettext.translation(...).install()` in the entry point), then provide `.po`
+  files. Call sites need no change since they reference the `strings` names.
 
 ## 8. Testing
 
 There is no formal test suite yet, but the refactor makes the model layer
 testable without a display, since the core modules (`config.py`, `model.py`,
-`settings.py`, `pango_markdown.py`) import no GTK. The GTK3 view modules
+`settings.py`, `pango_markdown.py`, `strings.py`) import no GTK. The GTK3 view modules
 (`gtk3_*.py`) need GTK to import, but can be sanity-checked for composition (that
 `NotebookWindow` resolves all its mixin methods) with a stubbed `gi`.
 

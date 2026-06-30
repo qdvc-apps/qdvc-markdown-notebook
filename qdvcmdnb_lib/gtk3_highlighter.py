@@ -23,6 +23,9 @@ class MarkdownHighlighter:
     """
 
     def __init__(self, buffer, code_font="monospace 11"):
+        # Hold the Gtk.TextBuffer we colour, create our style tags once, and
+        # precompile the regexes used to find markdown constructs. (A
+        # Gtk.TextBuffer stores text plus "tags" that style ranges of it.)
         self.buffer = buffer
         self._code_font = code_font
         self._make_tags()
@@ -44,6 +47,12 @@ class MarkdownHighlighter:
         ]
 
     def _make_tags(self):
+        # Define the styling tags on the buffer's tag table (the registry of all
+        # tags). Each tag carries text-style properties (colour, weight, …) that
+        # GTK applies wherever the tag is later attached. `ensure` is idempotent:
+        # table.lookup returns an existing tag (so re-running is harmless), and
+        # create_tag(name, **props) makes a new one. The Pango.* enums are GTK's
+        # font weight/style/underline constants.
         table = self.buffer.get_tag_table()
 
         def ensure(name, **props):

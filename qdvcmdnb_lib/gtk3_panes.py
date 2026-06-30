@@ -7,6 +7,8 @@ the headings-outline (pane 4), and the status bar; plus the reload / cell-render
 selection helpers that populate panes 1, 2 and 4 from qdvcmdnb_lib.model.
 GTK3-specific; relies on attributes/handlers defined across the window and its
 other mixins.
+
+User-facing text comes from qdvcmdnb_lib.strings (Sidebar namespace).
 """
 
 import os
@@ -25,11 +27,26 @@ from .config import (
     NODE_SUBFOLDERS,
     NODE_SUBFOLDER,
 )
+from .strings import Sidebar as S
 
 
 class PanesMixin:
     """Pane construction + data binding for NotebookWindow (see module docstring)."""
+
     def _build_sidebar(self):
+        # Build pane 1: a tree of "All Notes / Inbox / Empty Notes / Subfolders".
+        #
+        # GTK notes for non-GTK readers:
+        #  * A Gtk.ScrolledWindow wraps a child so it gains scrollbars; the policy
+        #    AUTOMATIC means "show a scrollbar only when needed".
+        #  * The data lives in a Gtk.TreeStore (a tree-shaped table of typed
+        #    columns); the Gtk.TreeView is the widget that renders it. They are
+        #    kept separate (model/view): here the store has four str columns.
+        #  * A TreeViewColumn draws cells via "cell renderers". We pack a pixbuf
+        #    renderer (the icon) and a text renderer, then add_attribute maps a
+        #    store column index to a renderer property ("icon-name"/"text").
+        #  * get_selection() returns the selection object; its "changed" signal
+        #    fires when the highlighted row changes.
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
 
@@ -39,7 +56,7 @@ class PanesMixin:
         self.sidebar_view = Gtk.TreeView(model=self.sidebar_store)
         self.sidebar_view.set_headers_visible(False)
 
-        col = Gtk.TreeViewColumn("Folders")
+        col = Gtk.TreeViewColumn(S.FOLDERS_COLUMN)
         icon_renderer = Gtk.CellRendererPixbuf()
         text_renderer = Gtk.CellRendererText()
         col.pack_start(icon_renderer, False)
@@ -55,7 +72,19 @@ class PanesMixin:
         return scroll
 
     def _build_notelist(self):
-        # Vertical box: a search row on top, then the list/placeholder stack.
+        # Build pane 2: a search row stacked above the note list.
+        #
+        # GTK notes:
+        #  * A Gtk.Box packs children in a row/column; pack_start(child, expand,
+        #    fill, padding) adds them left-to-right (or top-to-bottom for VERTICAL).
+        #  * A Gtk.Entry is a single-line text field; set_placeholder_text shows
+        #    grey hint text when empty; its "activate" signal fires on ENTER. We
+        #    also add a clickable clear icon inside it ("icon-press" signal).
+        #  * A Gtk.Stack holds several children but shows one at a time by name —
+        #    here the real list vs a placeholder for the Subfolders parent node.
+        #  * The list is a ListStore (flat table) shown by a TreeView. The text
+        #    renderer's "ellipsize" trims long titles with an ellipsis, and a
+        #    cell-data-func lets us compute each cell's markup at draw time.
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 
         # --- search row ---
@@ -66,7 +95,7 @@ class PanesMixin:
         search_row.set_margin_bottom(4)
 
         self.search_entry = Gtk.Entry()
-        self.search_entry.set_placeholder_text("Search notes\u2026")
+        self.search_entry.set_placeholder_text(S.SEARCH_PLACEHOLDER)
         self.search_entry.set_hexpand(True)
         # Only search on ENTER (the "activate" signal), not on every keystroke.
         self.search_entry.connect("activate", self.on_search)
@@ -76,7 +105,7 @@ class PanesMixin:
         self.search_entry.connect("icon-press", self.on_search_icon_press)
         search_row.pack_start(self.search_entry, True, True, 0)
 
-        search_btn = Gtk.Button(label="Search")
+        search_btn = Gtk.Button(label=S.SEARCH_BUTTON)
         search_btn.set_image(Gtk.Image.new_from_icon_name(
             "edit-find", Gtk.IconSize.BUTTON))
         search_btn.set_always_show_image(True)
@@ -105,25 +134,31 @@ class PanesMixin:
 
         renderer = Gtk.CellRendererText()
         renderer.set_property("ellipsize", Pango.EllipsizeMode.END)
-        col = Gtk.TreeViewColumn("Notes", renderer)
+        col = Gtk.TreeViewColumn(S.NOTES_COLUMN, renderer)
         col.set_cell_data_func(renderer, self._note_cell_data)
         self.note_view.append_column(col)
 
         self.note_view.get_selection().connect(
             "changed", self.on_note_selection_changed)
+        # "button-press-event" delivers raw mouse clicks (used for right-click).
         self.note_view.connect("button-press-event",
                                self.on_notelist_button_press)
 
         scroll.add(self.note_view)
+        # add_named registers each child under a key; set_visible_child_name
+        # picks which one is shown.
         self.notelist_stack.add_named(scroll, "list")
         self.notelist_stack.add_named(
-            self._make_placeholder("Select a folder or note"), "placeholder")
+            self._make_placeholder(S.NOTELIST_PLACEHOLDER), "placeholder")
         self.notelist_stack.set_visible_child_name("list")
         outer.pack_start(self.notelist_stack, True, True, 0)
         return outer
 
     @staticmethod
     def _make_placeholder(text):
+        # A centred, dim message used as a Stack page when there's nothing to
+        # list. set_markup interprets Pango markup (an HTML-like styling string);
+        # halign/valign CENTER centre the box within the available space.
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.set_valign(Gtk.Align.CENTER)
         box.set_halign(Gtk.Align.CENTER)
@@ -134,12 +169,16 @@ class PanesMixin:
         return box
 
     def _show_notelist_placeholder(self):
+        # Switch pane 2 to its placeholder page and clear the backing list.
         self.note_store.clear()
         self.notelist_stack.set_visible_child_name("placeholder")
         self.update_status()
 
     def _build_editor(self):
-        # The editor area is a Gtk.Notebook; each page is an EditorTab.
+        # Build pane 3: the editor host. A Gtk.Notebook is the tabbed container;
+        # each page is an EditorTab (added later in _new_tab). set_scrollable
+        # adds arrows when tabs overflow; "switch-page" fires when the active tab
+        # changes. We hide the tab strip while there's only one tab.
         self.notebook = Gtk.Notebook()
         self.notebook.set_scrollable(True)
         self.notebook.set_show_border(False)
@@ -155,6 +194,12 @@ class PanesMixin:
         Pane 4: a tree of the current note's markdown headings. Each row stores
         the heading title and the 0-based source line to jump to. Hidden until
         toggled on (the toggle calls _apply_outline_visibility).
+
+        Like the sidebar, this is a TreeStore + TreeView. "row-activated" fires on
+        double-click/Enter and the selection's "changed" fires on single click;
+        both jump to the heading. set_no_show_all(True) means a blanket
+        show_all() on the window won't reveal this pane — we show it explicitly
+        only when the outline toggle is on.
         """
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -164,7 +209,9 @@ class PanesMixin:
         self.outline_store = Gtk.TreeStore(str, int)
         self.outline_view = Gtk.TreeView(model=self.outline_store)
         self.outline_view.set_headers_visible(False)
-        col = Gtk.TreeViewColumn("Outline", Gtk.CellRendererText(), text=0)
+        # Shorthand column: bind store column 0 directly to the renderer's text.
+        col = Gtk.TreeViewColumn(S.OUTLINE_COLUMN, Gtk.CellRendererText(),
+                                 text=0)
         self.outline_view.append_column(col)
         self.outline_view.connect("row-activated", self.on_outline_row_activated)
         # Single click should jump too (not just double-click/Enter).
@@ -177,8 +224,10 @@ class PanesMixin:
         return scroll
 
     def _build_statusbar(self):
-        # A horizontal strip: a bold mode indicator (#1) on the left, then the
-        # regular statusbar filling the rest.
+        # Build the footer: a bold mode indicator on the left, then a normal
+        # Gtk.Statusbar filling the rest. A Statusbar shows messages from a
+        # context (an id from get_context_id); push() adds a message and pop()
+        # removes the top one (we pop+push to replace text in update_status).
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         self.statusbar_box = box
         self.mode_label = Gtk.Label()
@@ -191,6 +240,9 @@ class PanesMixin:
         return box
 
     def _reload_sidebar(self, preserve_selection=False):
+        # Rebuild pane 1's rows from the current workspace. TreeStore.append
+        # (parent, row) adds a row; parent=None means top level, and passing a
+        # parent iter nests the row beneath it (the subfolders under "Subfolders").
         # Remember the current selection so a refresh doesn't reset it.
         prev_node = self.current_node
         prev_sub = self.current_subfolder
@@ -198,21 +250,21 @@ class PanesMixin:
         self.sidebar_store.clear()
         # Row schema: [icon_name, label, node_kind, subfolder_name]
         self.sidebar_store.append(
-            None, ["emblem-documents", "All Notes", NODE_ALL_NOTES, ""])
+            None, ["emblem-documents", S.ALL_NOTES, NODE_ALL_NOTES, ""])
         # Inbox: notes sitting at the top level (not yet filed into a subfolder).
         self.sidebar_store.append(
-            None, ["mail-inbox", "Inbox", NODE_INBOX, ""])
+            None, ["mail-inbox", S.INBOX, NODE_INBOX, ""])
         self.sidebar_store.append(
-            None, ["edit-clear", "Empty Notes", NODE_EMPTY_NOTES, ""])
+            None, ["edit-clear", S.EMPTY_NOTES, NODE_EMPTY_NOTES, ""])
 
         subfolders_iter = self.sidebar_store.append(
-            None, ["folder", "Subfolders", NODE_SUBFOLDERS, ""])
+            None, ["folder", S.SUBFOLDERS, NODE_SUBFOLDERS, ""])
         if self.root_folder:
             for sub in model.immediate_subfolders(self.root_folder):
                 self.sidebar_store.append(
                     subfolders_iter, ["folder", sub, NODE_SUBFOLDER, sub])
 
-        # Expand the Subfolders branch so its children are visible.
+        # expand_all opens every tree row so the Subfolders children are visible.
         self.sidebar_view.expand_all()
 
         if preserve_selection and prev_node is not None:
@@ -222,11 +274,14 @@ class PanesMixin:
                 self.sidebar_view.get_selection().select_path(
                     Gtk.TreePath.new_first())
         else:
-            # Default: select "All Notes".
+            # Default: select "All Notes" (TreePath.new_first = the first row).
             self.sidebar_view.get_selection().select_path(
                 Gtk.TreePath.new_first())
 
     def _notes_for_current_subfolder(self):
+        # Pure dispatch (no GTK): pick the model query for the selected sidebar
+        # node and return a list of Note objects. The window/handlers turn this
+        # into rows in _reload_notelist.
         if not self.root_folder:
             return []
         if self.current_node == NODE_ALL_NOTES:
@@ -242,6 +297,10 @@ class PanesMixin:
         return []
 
     def _reload_notelist(self, select_path=None):
+        # Refill pane 2 from disk. We clear the ListStore and append one row per
+        # note (append takes a list matching the store's column types). Optionally
+        # re-select a row by its file path afterwards. Each row.iter is the
+        # TreeIter (a handle to that row) the selection needs.
         self.notelist_stack.set_visible_child_name("list")
         self.note_store.clear()
         notes = model.sort_notes(
@@ -272,12 +331,17 @@ class PanesMixin:
 
     def _note_cell_data(self, _col, cell, store, treeiter, _data):
         """
-        Build the cell markup at draw time. In list view it's just the title.
-        In card view it's three lines: bold title, then the last-modified date
-        and the first body line. The sub-lines use the same colour as the title
-        (so nothing clashes with the selection highlight) but are italicised and
-        slightly smaller to set them apart. Card rows also get a little extra
-        top/bottom padding.
+        Build the cell markup at draw time. GTK calls this "cell-data-func" for
+        every visible row just before painting, passing the cell renderer and the
+        row (store + treeiter); we set the renderer's properties to control what
+        that row shows. This lets one renderer paint either a plain title (list
+        view) or a multi-line card (card view).
+
+        In list view it's just the title. In card view it's three lines: bold
+        title, then the last-modified date and the first body line. The sub-lines
+        use the same colour as the title (so nothing clashes with the selection
+        highlight) but are italicised and slightly smaller to set them apart.
+        Card rows also get a little extra top/bottom padding via "ypad".
         """
         title = _xml_escape(store[treeiter][0])
         if not self.card_view:
@@ -300,6 +364,12 @@ class PanesMixin:
         """
         Programmatically select a sidebar row by kind (and subfolder name).
         Returns True if a matching row was found and selected, else False.
+
+        TreeModel.foreach walks every row, calling our callback with
+        (model, path, iter); returning True from the callback stops the walk.
+        We use a one-key dict as a mutable flag because the nested function can't
+        rebind a plain local from the enclosing scope. expand_to_path opens any
+        parent rows so the target is visible before selecting it.
         """
         found = {"hit": False}
 
@@ -317,7 +387,16 @@ class PanesMixin:
         return found["hit"]
 
     def _refresh_outline(self):
-        """Rebuild the outline tree from the active tab's current content."""
+        """
+        Rebuild the outline tree (pane 4) from the active tab's current text.
+
+        Headings come from model.parse_headings (pure parsing, no GTK). We turn
+        the flat list into a nested TreeStore by tracking a stack of open
+        (level, row) frames: before adding a heading we pop frames whose level is
+        >= the new one, so the new row nests under the nearest shallower heading.
+        The _outline_guard flag suppresses the selection-"changed" handler while
+        we rebuild (otherwise clearing/refilling would fire spurious jumps).
+        """
         if not getattr(self, "outline_visible", False):
             return
         self._outline_guard = True
@@ -344,7 +423,12 @@ class PanesMixin:
             self._outline_guard = False
 
     def _apply_outline_visibility(self):
-        """Show/hide the outline pane and (re)build it when shown."""
+        """Show/hide the outline pane and (re)build it when shown.
+
+        Because the pane has set_no_show_all(True), we must call show()/
+        show_all() on it explicitly to reveal it (and its child rows); hide()
+        collapses it back out of the layout.
+        """
         if self.outline_visible:
             self.outline_scroll.show()
             self.outline_view.show_all()
@@ -353,10 +437,16 @@ class PanesMixin:
             self.outline_scroll.hide()
 
     def on_outline_row_activated(self, _view, path, _col):
+        # "row-activated" handler (double-click/Enter on an outline row). GTK
+        # passes the tree path of the activated row; we look up its stored source
+        # line (column 1) and jump the editor there.
         treeiter = self.outline_store.get_iter(path)
         self._jump_to_outline_line(self.outline_store[treeiter][1])
 
     def on_outline_selection_changed(self, selection):
+        # Selection "changed" handler (single click). Skipped while we are
+        # rebuilding the tree (_outline_guard). get_selected() returns
+        # (model, iter); iter is None if nothing is selected.
         if self._outline_guard:
             return
         _model, treeiter = selection.get_selected()
@@ -365,6 +455,8 @@ class PanesMixin:
         self._jump_to_outline_line(_model[treeiter][1])
 
     def _jump_to_outline_line(self, line_index):
+        # Ask the active tab to scroll its editor to the given source line. No GTK
+        # here directly — the tab owns the TextView and does the scrolling.
         tab = self._active_tab()
         if tab is not None and tab.note is not None:
             tab.scroll_to_line(line_index)
