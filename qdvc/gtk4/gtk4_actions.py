@@ -34,6 +34,7 @@ class ActionsMixin:
             ("new-tab", self.on_new_tab),
             ("close-tab", self.on_close_tab),
             ("slugify", self.on_slugify),
+            ("set-window-title", self.on_set_window_title),
             ("preferences", self.on_preferences),
             ("about", self.on_about),
             ("quit", self.on_quit),

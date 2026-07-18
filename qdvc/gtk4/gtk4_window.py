@@ -86,6 +86,8 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         # icon reflects it; falls back to the stock icon otherwise.
         self._apply_icon_set()
         self.root_folder = None
+        # A user-set custom window title (session-only). None = use the default.
+        self._custom_title = None
         self.current_node = NODE_ALL_NOTES
         self.current_subfolder = None
         self.sort_mode = SORT_ALPHA
@@ -234,6 +236,17 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
 
         # (Open workspace lives in the primary menu, not the header.)
 
+        # Recent workspaces: a dedicated header menu-button with its own popover
+        # so the (potentially long) paths never widen the primary menu. The
+        # popover's Gio.Menu is refilled by _rebuild_recent_menu.
+        self._recent_menu = Gio.Menu()
+        self._recent_btn = Gtk.MenuButton()
+        self._recent_btn.set_icon_name(self._resolve_icon_name(
+            "document-open-recent-symbolic", ("document-open-symbolic",)))
+        self._recent_btn.set_tooltip_text(Menu.OPEN_RECENT_WORKSPACE)
+        self._recent_btn.set_menu_model(self._recent_menu)
+        header.pack_start(self._recent_btn)
+
         # Primary menu (open-menu-symbolic, set_primary) with the HIG-mandated
         # final Preferences / Keyboard Shortcuts / About section.
         menu_btn = Gtk.MenuButton()
@@ -293,10 +306,6 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         file_section.append(Menu.OPEN_WORKSPACE, "win.open-workspace")
         file_section.append(Menu.REFRESH_WORKSPACE, "win.refresh-workspace")
         file_section.append(Menu.CLOSE_WORKSPACE, "win.close-workspace")
-        # Recent workspaces submenu (refilled by _rebuild_recent_menu).
-        self._recent_menu = Gio.Menu()
-        file_section.append_submenu(Menu.OPEN_RECENT_WORKSPACE,
-                                    self._recent_menu)
         menu.append_section(None, file_section)
 
         tab_section = Gio.Menu()
@@ -309,6 +318,7 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         view_section.append(Menu.CARD_VIEW, "win.toggle-card-view")
         view_section.append(Menu.PREVIEW, "win.toggle-preview")
         view_section.append(Menu.OUTLINE, "win.toggle-outline")
+        view_section.append(Menu.SET_WINDOW_TITLE, "win.set-window-title")
         menu.append_section(None, view_section)
 
         # HIG-mandated final section.
@@ -1164,10 +1174,41 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         self._confirm_close_all(finish)
 
     def _update_window_title(self):
-        if self.root_folder:
+        if self._custom_title:
+            self.set_title(self._custom_title)
+        elif self.root_folder:
             self.set_title(f"{APP_NAME} \u2014 {self.root_folder}")
         else:
             self.set_title(APP_NAME)
+
+    def on_set_window_title(self, _action, _param):
+        """Prompt for a custom window title via an async Adw.MessageDialog with
+        an entry. OK applies the typed title (blank clears), Reset clears to the
+        default, Cancel does nothing. The title is session-only."""
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading=D.SET_TITLE_HEADING,
+            body=D.SET_TITLE_PROMPT)
+        entry = Gtk.Entry()
+        entry.set_text(self._custom_title or "")
+        entry.set_activates_default(True)
+        dialog.set_extra_child(entry)
+        dialog.add_response("cancel", D.BTN_CANCEL.replace("_", ""))
+        dialog.add_response("reset", D.BTN_RESET.replace("_", ""))
+        dialog.add_response("ok", D.BTN_OK.replace("_", ""))
+        dialog.set_default_response("ok")
+        dialog.set_close_response("cancel")
+
+        def on_response(_dlg, response):
+            if response == "ok":
+                text = entry.get_text().strip()
+                self._custom_title = text or None
+                self._update_window_title()
+            elif response == "reset":
+                self._custom_title = None
+                self._update_window_title()
+        dialog.connect("response", on_response)
+        dialog.present()
 
     # ================================================= prefs / about == #
     def on_preferences(self, _action, _param):
@@ -1182,18 +1223,25 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         self._apply_icon_set()
 
     def on_about(self, _action, _param):
+        # Use the same icon the app is currently showing: when a custom icon set
+        # is configured it has been installed into the hicolor theme under
+        # APP_ICON_NAME (see _apply_icon_set), so pass that themed name; else the
+        # stock icon. Mirrors the GTK 3 _set_about_logo resolution order.
+        from .gtk4_app import ICON_NAME
+        icon_name = (APP_ICON_NAME if icon_set_files(self.settings.icon_set_dir)
+                     else ICON_NAME)
         about = Adw.AboutWindow(transient_for=self) \
             if hasattr(Adw, "AboutWindow") else None
         if about is not None:
             about.set_application_name(APP_NAME)
             about.set_comments(strings.APP_COMMENTS)
-            from .gtk4_app import ICON_NAME
-            about.set_application_icon(ICON_NAME)
+            about.set_application_icon(icon_name)
             about.present()
         else:  # pragma: no cover - very old libadwaita
             dlg = Gtk.AboutDialog(transient_for=self, modal=True)
             dlg.set_program_name(APP_NAME)
             dlg.set_comments(strings.APP_COMMENTS)
+            dlg.set_logo_icon_name(icon_name)
             dlg.present()
 
     # ================================================= quit / session = #
