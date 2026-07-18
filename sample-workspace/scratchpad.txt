@@ -1,0 +1,5 @@
+quick thoughts
+--------------
+- try the outline pane on a long note
+- the .txt extension is recognised too
+- move this into a folder when it grows up
