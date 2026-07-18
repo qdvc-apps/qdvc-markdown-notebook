@@ -196,6 +196,17 @@ class Prefs:
                      "32x32.png, 48x48.png, 256x256.png and scalable.svg. Takes "
                      "full effect on next launch.")
 
+    # UI backend selector (GTK4 Preferences; spec §3/§9).
+    UI_BACKEND_LABEL = "User-interface toolkit:"
+    UI_BACKEND_SUBTITLE = "Takes effect after restart."
+    UI_BACKEND_GTK3 = "GTK 3 (MATE / classic)"
+    UI_BACKEND_GTK4 = "GTK 4 / libadwaita (modern)"
+    # Adwaita preference group headings.
+    GROUP_FONTS = "Fonts"
+    GROUP_SPACING = "Spacing"
+    GROUP_INTERFACE = "Interface"
+    GROUP_SESSION = "Session"
+
 
 class Dialog:
     """Dialog titles, prompts, button labels, and error messages.

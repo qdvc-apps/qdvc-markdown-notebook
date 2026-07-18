@@ -2,7 +2,8 @@
 
 A **quick and dirty, vibe-coded** (QDVC) three-pane markdown notebook for the Linux desktop, in the spirit
 of FSNotes, Notational Velocity, and QOwnNotes — built with **GTK 3 / PyGObject**
-for a native MATE / GNOME2-era look and feel (think Pluma and Atril).
+for a native MATE / GNOME2-era look and feel (think Pluma and Atril), plus a
+parallel **GTK 4 / libadwaita** front-end for a modern GNOME look.
 
 It points at a folder of `.md` files and gives you:
 
@@ -21,18 +22,31 @@ Plus a menu bar, toolbar (New / Save / Refresh / Slugify / Card view / Read-only
 ```bash
 python3 qdvc_markdown_notebook.py /path/to/markdown/data   # open a folder
 python3 qdvc_markdown_notebook.py                          # start empty, Ctrl+O to open
+python3 qdvc_markdown_notebook.py --gtk4 [folder]          # use the GTK 4 front-end
+python3 qdvc_markdown_notebook.py --gtk3 [folder]          # use the GTK 3 front-end (default)
 ```
+
+The front-end is chosen by (1) a `--gtk3` / `--gtk4` flag, else (2) the
+`ui_backend` setting saved in the config, else (3) the default, GTK 3. The
+GTK 4 front-end also exposes the toolkit selector in its Preferences (takes
+effect on next launch). If GTK 4 / libadwaita isn't installed, the app prints a
+note and falls back to GTK 3.
 
 ## Requirements
 
-- Python 3
-- GTK 3 with PyGObject (`python3-gi`, `gir1.2-gtk-3.0`)
-- PyYAML (optional) — for saving settings; the app runs without it
+- Python 3.10+
+- PyGObject with **one** of:
+  - GTK 3 (`python3-gi`, `gir1.2-gtk-3.0`) — the default front-end; or
+  - GTK 4 + libadwaita (`gir1.2-gtk-4.0`, `gir1.2-adw-1`) — the modern front-end
+- PyYAML — for saving settings; the app runs without it (nothing persists)
 
 On Debian/Ubuntu/MATE:
 
 ```bash
+# GTK 3 (default):
 sudo apt install python3-gi gir1.2-gtk-3.0 python3-yaml
+# GTK 4 / libadwaita (optional, for --gtk4):
+sudo apt install python3-gi gir1.2-gtk-4.0 gir1.2-adw-1 python3-yaml
 ```
 
 ## Desktop integration (application menu entry)

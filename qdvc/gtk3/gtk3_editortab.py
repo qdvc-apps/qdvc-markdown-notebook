@@ -18,10 +18,10 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Pango, GLib  # noqa: E402
 
-from . import model
-from . import pango_markdown
+from .. import model
+from .. import pango_markdown
 from .gtk3_highlighter import MarkdownHighlighter
-from .strings import Editor as S
+from ..strings import Editor as S
 
 # Backwards-compatible alias: this used to be a module constant. It now points
 # at the centralised string so existing references keep working.

@@ -73,6 +73,13 @@ MAX_TAB_TITLE_LENGTH = 80
 DEFAULT_REMEMBER_SORT = False
 DEFAULT_RESTORE_SESSION = False
 
+# UI backend selection (spec §3). The dispatcher picks the front-end from a CLI
+# flag, then this stored value, then the default. Anything unrecognised falls
+# back to gtk3 via the validated `ui_backend` accessor.
+UI_BACKEND_GTK3 = "gtk3"
+UI_BACKEND_GTK4 = "gtk4"
+DEFAULT_UI_BACKEND = UI_BACKEND_GTK3
+
 # Custom icon set: an absolute path to a folder containing 16x16.png, 22x22.png,
 # 24x24.png, 32x32.png, 48x48.png, 256x256.png, and scalable.svg. Empty means
 # "use the stock accessories-text-editor icon".
@@ -341,6 +348,9 @@ class Settings:
         self.tab_title_length = DEFAULT_TAB_TITLE_LENGTH
         self.remember_sort = DEFAULT_REMEMBER_SORT
         self.restore_session = DEFAULT_RESTORE_SESSION
+        # UI backend ("gtk3"/"gtk4"); read via the validated `ui_backend`
+        # property so a hand-edited config can never yield an invalid value.
+        self._ui_backend = DEFAULT_UI_BACKEND
         self.icon_set_dir = DEFAULT_ICON_SET_DIR
         # Persisted sort mode (one of the SORT_* strings from config). Stored as
         # a plain string here to avoid importing config; the window validates it.
@@ -415,6 +425,11 @@ class Settings:
         self.restore_session = _coerce_bool(
             data.get("restore_session"), self.restore_session)
 
+        # ui_backend is stored raw and validated on read (see the property).
+        ui_backend = data.get("ui_backend")
+        if isinstance(ui_backend, str) and ui_backend.strip():
+            self._ui_backend = ui_backend.strip().lower()
+
         icon_set = data.get("icon_set_dir")
         if isinstance(icon_set, str):
             self.icon_set_dir = icon_set.strip()
@@ -450,7 +465,7 @@ class Settings:
         known = {"version", "editor_font", "code_font", "preview_font",
                  "editor_line_spacing", "preview_line_spacing",
                  "toolbar_style", "tab_title_length", "remember_sort",
-                 "restore_session", "icon_set_dir", "sort_mode",
+                 "restore_session", "ui_backend", "icon_set_dir", "sort_mode",
                  "last_workspace", "last_open_notes", "last_node",
                  "last_subfolder", "last_selected_note", "recent_folders"}
         self._extra = {k: v for k, v in data.items() if k not in known}
@@ -468,6 +483,7 @@ class Settings:
             "tab_title_length": self.tab_title_length,
             "remember_sort": self.remember_sort,
             "restore_session": self.restore_session,
+            "ui_backend": self.ui_backend,
             "icon_set_dir": self.icon_set_dir,
             "sort_mode": self.sort_mode,
             "last_workspace": self.last_workspace,
@@ -533,6 +549,24 @@ class Settings:
 
     def set_restore_session(self, value):
         self.restore_session = _coerce_bool(value, self.restore_session)
+
+    @property
+    def ui_backend(self):
+        """
+        The validated UI backend, always one of UI_BACKEND_GTK3 /
+        UI_BACKEND_GTK4. Anything else stored (e.g. from a hand-edited config)
+        reads back as the default gtk3, so the dispatcher can never be handed an
+        invalid backend (spec §3).
+        """
+        val = (self._ui_backend or "").lower()
+        if val in (UI_BACKEND_GTK3, UI_BACKEND_GTK4):
+            return val
+        return DEFAULT_UI_BACKEND
+
+    def set_ui_backend(self, backend):
+        if isinstance(backend, str) and backend.strip().lower() in (
+                UI_BACKEND_GTK3, UI_BACKEND_GTK4):
+            self._ui_backend = backend.strip().lower()
 
     def set_icon_set_dir(self, path):
         if isinstance(path, str):

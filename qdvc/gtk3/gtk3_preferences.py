@@ -24,7 +24,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # noqa: E402
 
-from .settings import (
+from ..settings import (
     TOOLBAR_TEXT_BESIDE,
     TOOLBAR_TEXT_BELOW,
     MIN_LINE_SPACING,
@@ -32,7 +32,7 @@ from .settings import (
     MIN_TAB_TITLE_LENGTH,
     MAX_TAB_TITLE_LENGTH,
 )
-from .strings import Prefs as P, Dialog as D
+from ..strings import Prefs as P, Dialog as D
 
 
 class PreferencesDialog(Gtk.Dialog):

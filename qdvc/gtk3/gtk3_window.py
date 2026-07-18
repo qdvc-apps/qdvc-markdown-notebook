@@ -28,8 +28,8 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib  # noqa: E402
 
-from . import model
-from .config import (
+from .. import model
+from ..config import (
     APP_NAME,
     SORT_ALPHA,
     SORT_DATE_NEW,
@@ -40,7 +40,7 @@ from .config import (
     NODE_SUBFOLDERS,
     NODE_SUBFOLDER,
 )
-from .settings import (
+from ..settings import (
     Settings,
     icon_set_files,
     install_icon_set,
@@ -53,14 +53,14 @@ from .gtk3_menubar import MenuBarMixin
 from .gtk3_toolbar import ToolbarMixin
 from .gtk3_panes import PanesMixin
 from .gtk3_actions import ActionsMixin
-from . import strings
-from .strings import Status, Menu
+from .. import strings
+from ..strings import Status, Menu
 
 
 class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
-                     Gtk.Window):
-    def __init__(self, root_folder=None):
-        super().__init__(title=APP_NAME)
+                     Gtk.ApplicationWindow):
+    def __init__(self, root_folder=None, application=None):
+        super().__init__(title=APP_NAME, application=application)
         self.set_default_size(1000, 640)
         # Center on screen at startup (#1) rather than the WM's default corner.
         self.set_position(Gtk.WindowPosition.CENTER)
@@ -122,7 +122,6 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         # the sidebar instead.
         self.set_focus(self.sidebar_view)
 
-        self.connect("destroy", Gtk.main_quit)
         self.connect("delete-event", self._on_delete_event)
         self.connect("key-press-event", self._on_key_press)
 

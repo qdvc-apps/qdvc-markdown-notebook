@@ -13,10 +13,11 @@ can be translated in one place.
 import gi
 
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk  # noqa: E402
+from gi.repository import Gtk  # noqa: E402
 
-from .config import SORT_ALPHA, SORT_DATE_NEW, SORT_DATE_OLD
-from .strings import Menu
+from ..config import SORT_ALPHA, SORT_DATE_NEW, SORT_DATE_OLD
+from ..strings import Menu
+from .gtk3_shortcuts import add_menu_accel
 
 
 class MenuBarMixin:
@@ -48,25 +49,19 @@ class MenuBarMixin:
         file_item.set_submenu(file_menu)
 
         mi_new = self._icon_menu_item(Menu.NEW_NOTE, "document-new")
-        mi_new.add_accelerator("activate", accel, Gdk.KEY_n,
-                               Gdk.ModifierType.CONTROL_MASK,
-                               Gtk.AccelFlags.VISIBLE)
+        add_menu_accel(mi_new, accel, "new-note")
         mi_new.connect("activate", self.on_new_note)
         file_menu.append(mi_new)
 
         mi_save = self._icon_menu_item(Menu.SAVE_NOTE, "document-save")
-        mi_save.add_accelerator("activate", accel, Gdk.KEY_s,
-                                Gdk.ModifierType.CONTROL_MASK,
-                                Gtk.AccelFlags.VISIBLE)
+        add_menu_accel(mi_save, accel, "save-note")
         mi_save.connect("activate", self.on_save_note)
         file_menu.append(mi_save)
 
         # Refresh note — mirrors the toolbar button; Ctrl+R. Disabled until a
         # note is open (kept in sync in _update_save_sensitivity).
         self.mi_refresh = self._icon_menu_item(Menu.REFRESH_NOTE, "view-refresh")
-        self.mi_refresh.add_accelerator("activate", accel, Gdk.KEY_r,
-                                        Gdk.ModifierType.CONTROL_MASK,
-                                        Gtk.AccelFlags.VISIBLE)
+        add_menu_accel(self.mi_refresh, accel, "refresh-note")
         self.mi_refresh.set_sensitive(False)
         self.mi_refresh.connect("activate", self.on_refresh_note)
         file_menu.append(self.mi_refresh)
@@ -75,9 +70,7 @@ class MenuBarMixin:
         file_menu.append(Gtk.SeparatorMenuItem())
 
         mi_open = self._icon_menu_item(Menu.OPEN_WORKSPACE, "folder-open")
-        mi_open.add_accelerator("activate", accel, Gdk.KEY_o,
-                                Gdk.ModifierType.CONTROL_MASK,
-                                Gtk.AccelFlags.VISIBLE)
+        add_menu_accel(mi_open, accel, "open-workspace")
         mi_open.connect("activate", self.on_open_folder)
         file_menu.append(mi_open)
 
@@ -85,10 +78,7 @@ class MenuBarMixin:
         # from disk. Same icon as Refresh note. Ctrl+Shift+R.
         self.mi_refresh_ws = self._icon_menu_item(Menu.REFRESH_WORKSPACE,
                                                   "view-refresh")
-        self.mi_refresh_ws.add_accelerator(
-            "activate", accel, Gdk.KEY_r,
-            Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK,
-            Gtk.AccelFlags.VISIBLE)
+        add_menu_accel(self.mi_refresh_ws, accel, "refresh-workspace")
         self.mi_refresh_ws.connect("activate", self.on_refresh_workspace)
         file_menu.append(self.mi_refresh_ws)
 
@@ -107,16 +97,12 @@ class MenuBarMixin:
         file_menu.append(Gtk.SeparatorMenuItem())
 
         mi_new_tab = self._icon_menu_item(Menu.NEW_TAB, "tab-new")
-        mi_new_tab.add_accelerator("activate", accel, Gdk.KEY_t,
-                                   Gdk.ModifierType.CONTROL_MASK,
-                                   Gtk.AccelFlags.VISIBLE)
+        add_menu_accel(mi_new_tab, accel, "new-tab")
         mi_new_tab.connect("activate", self.on_new_tab)
         file_menu.append(mi_new_tab)
 
         mi_close_tab = Gtk.MenuItem(label=Menu.CLOSE_TAB)
-        mi_close_tab.add_accelerator("activate", accel, Gdk.KEY_w,
-                                     Gdk.ModifierType.CONTROL_MASK,
-                                     Gtk.AccelFlags.VISIBLE)
+        add_menu_accel(mi_close_tab, accel, "close-tab")
         mi_close_tab.connect("activate", self.on_close_tab)
         file_menu.append(mi_close_tab)
 
@@ -125,9 +111,7 @@ class MenuBarMixin:
         mi_quit = self._icon_menu_item(Menu.QUIT, "application-exit")
         # Note: the spec listed Ctrl+S for Quit; that collides with Save,
         # so Quit is bound to the conventional Ctrl+Q instead. See MAINTENANCE.md.
-        mi_quit.add_accelerator("activate", accel, Gdk.KEY_q,
-                                Gdk.ModifierType.CONTROL_MASK,
-                                Gtk.AccelFlags.VISIBLE)
+        add_menu_accel(mi_quit, accel, "quit")
         mi_quit.connect("activate", self.on_quit)
         file_menu.append(mi_quit)
 
@@ -139,6 +123,7 @@ class MenuBarMixin:
         edit_item.set_submenu(edit_menu)
 
         mi_prefs = self._icon_menu_item(Menu.PREFERENCES, "preferences-system")
+        add_menu_accel(mi_prefs, accel, "preferences")
         mi_prefs.connect("activate", self.on_preferences)
         edit_menu.append(mi_prefs)
 
@@ -174,31 +159,22 @@ class MenuBarMixin:
 
         self.mi_readonly = Gtk.CheckMenuItem(label=Menu.READ_ONLY)
         self.mi_readonly.set_active(True)
-        self.mi_readonly.add_accelerator("activate", accel, Gdk.KEY_e,
-                                         Gdk.ModifierType.CONTROL_MASK,
-                                         Gtk.AccelFlags.VISIBLE)
+        add_menu_accel(self.mi_readonly, accel, "toggle-read-only")
         self.mi_readonly.connect("toggled", self.on_menu_toggle_read_only)
         view_menu.append(self.mi_readonly)
 
         self.mi_cardview = Gtk.CheckMenuItem(label=Menu.CARD_VIEW)
-        self.mi_cardview.add_accelerator("activate", accel, Gdk.KEY_d,
-                                         Gdk.ModifierType.CONTROL_MASK,
-                                         Gtk.AccelFlags.VISIBLE)
+        add_menu_accel(self.mi_cardview, accel, "toggle-card-view")
         self.mi_cardview.connect("toggled", self.on_menu_toggle_card_view)
         view_menu.append(self.mi_cardview)
 
         self.mi_preview = Gtk.CheckMenuItem(label=Menu.PREVIEW)
-        self.mi_preview.add_accelerator("activate", accel, Gdk.KEY_grave,
-                                        Gdk.ModifierType.CONTROL_MASK,
-                                        Gtk.AccelFlags.VISIBLE)
+        add_menu_accel(self.mi_preview, accel, "toggle-preview")
         self.mi_preview.connect("toggled", self.on_menu_toggle_preview)
         view_menu.append(self.mi_preview)
 
         self.mi_outline = Gtk.CheckMenuItem(label=Menu.OUTLINE)
-        self.mi_outline.add_accelerator("activate", accel, Gdk.KEY_o,
-                                        Gdk.ModifierType.CONTROL_MASK
-                                        | Gdk.ModifierType.SHIFT_MASK,
-                                        Gtk.AccelFlags.VISIBLE)
+        add_menu_accel(self.mi_outline, accel, "toggle-outline")
         self.mi_outline.connect("toggled", self.on_menu_toggle_outline)
         view_menu.append(self.mi_outline)
 

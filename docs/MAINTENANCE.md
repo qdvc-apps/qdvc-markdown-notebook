@@ -2,39 +2,63 @@
 
 Technical notes for anyone (human or AI) maintaining `qdvc_markdown_notebook.py`.
 
+This app follows the QDVC common specification; shared conventions (repository
+layout, backend dispatch, identity/icon policy, shortcuts, documentation rules,
+testing) live there and are **not** duplicated here:
+<https://github.com/qdvc-apps/qdvc-python-gtk-app-specification/>. This file
+documents what is specific to this app and any deviations (see §5). The
+element-by-element GTK3↔GTK4 map is in
+[MAINTENANCE_GTK3_GTK4.md](MAINTENANCE_GTK3_GTK4.md).
+
 ## 1. Overview
 
-A small GTK 3 / PyGObject desktop application. No build step, no external Python
-dependencies beyond `gi` (PyGObject). It edits markdown files **in place** on
-disk; there is no database, index, or cache.
+A GTK / PyGObject desktop application with two front-ends on one pure core: a
+**GTK 3** front-end (default, MATE/GNOME2-era look) and a parallel **GTK 4 /
+libadwaita** front-end (GNOME HIG). No build step, no external Python
+dependencies beyond `gi` (PyGObject) and PyYAML. It edits markdown files **in
+place** on disk; there is no database, index, or cache.
 
-The code is organised as a thin entry-point script plus an internal package,
-split into two layers so the lower one could be reused by a future GTK4 port:
-a **GTK-free core** (data / application logic) and a **GTK3 view/controller**
-whose modules are all prefaced `gtk3_`.
+The code is a thin backend-dispatcher entry point (spec §3) plus the `qdvc`
+package: a **GTK-free pure core** (data / application logic + toolkit-independent
+UI helpers) and two view sub-packages, `qdvc/gtk3/` (modules prefaced `gtk3_`)
+and `qdvc/gtk4/` (prefaced `gtk4_`).
 
 ```
-qdvc_markdown_notebook.py        # entry point: argv parsing, builds window, Gtk.main()
+qdvc_markdown_notebook.py        # thin dispatcher: --gtk3/--gtk4 → ui_backend → gtk3
 qdvc/
-    __init__.py
-    # ---- GTK-free core (no GTK import; unit-testable headless) ----
-    config.py                    # constants, sort modes, NODE_* kinds, ALL_NOTES sentinel
+    __init__.py                  # APP_ID, APP_NAME, __version__ re-exports
+    # ---- GTK-free pure core (no GTK import; unit-testable headless) ----
+    config.py                    # constants, sort modes, NODE_* kinds, APP_ID/PRGNAME/icon
     model.py                     # data layer: Note + filesystem + disk I/O + outline parse
     settings.py                  # persistent user settings (YAML) + icon-set/.desktop install
     pango_markdown.py            # Markdown → Pango-markup string renderer (no GTK widget)
     strings.py                   # all user-facing UI text, in one place (for i18n)
-    # ---- GTK3 view/controller (prefaced gtk3_) ----
-    gtk3_highlighter.py          # MarkdownHighlighter (GTK TextBuffer tagging)
-    gtk3_editortab.py            # EditorTab: one tab's editor widget + state
-    gtk3_preferences.py          # PreferencesDialog: the *view* for settings.py
-    gtk3_menubar.py              # MenuBarMixin: the window's menu bar
-    gtk3_toolbar.py              # ToolbarMixin: the window's toolbar + styling
-    gtk3_panes.py                # PanesMixin: the four panes + their data binding
-    gtk3_actions.py              # ActionsMixin: handlers, context menus, dialogs
-    gtk3_window.py               # NotebookWindow: composes the mixins (view + controller)
+    ui_prefs.py                  # shared SHORTCUTS table + toolkit-independent UI helpers
+    platform_utils.py            # launch system apps (viewer/editor/file manager)
+    highlight_rules.py           # toolkit-independent markdown highlight rules/spans
+    # ---- GTK3 view/controller (qdvc/gtk3/, prefaced gtk3_) ----
+    gtk3/gtk3_app.py             # NotebookApp: the Gtk.Application (id, icon, prgname)
+    gtk3/gtk3_highlighter.py     # MarkdownHighlighter (GTK TextBuffer tagging)
+    gtk3/gtk3_editortab.py       # EditorTab: one tab's editor widget + state
+    gtk3/gtk3_preferences.py     # PreferencesDialog: the *view* for settings.py
+    gtk3/gtk3_menubar.py         # MenuBarMixin: the window's menu bar
+    gtk3/gtk3_toolbar.py         # ToolbarMixin: the window's toolbar + styling
+    gtk3/gtk3_panes.py           # PanesMixin: the four panes + their data binding
+    gtk3/gtk3_actions.py         # ActionsMixin: handlers, context menus, dialogs
+    gtk3/gtk3_window.py          # NotebookWindow: composes the mixins (view + controller)
+    gtk3/gtk3_shortcuts.py       # wire the shared SHORTCUTS table into GTK3 accels
+    # ---- GTK4/libadwaita view (qdvc/gtk4/, prefaced gtk4_) ----
+    gtk4/gtk4_app.py             # NotebookApp: the Adw.Application + accels
+    gtk4/gtk4_window.py          # NotebookWindow: Adw window, panes, handlers
+    gtk4/gtk4_actions.py         # ActionsMixin: win.* Gio.SimpleActions
+    gtk4/gtk4_editorview.py      # EditorView: one tab's editor widget + state
+    gtk4/gtk4_highlighter.py     # MarkdownHighlighter (reuses highlight_rules)
+    gtk4/gtk4_preferences.py     # PreferencesWindow: Adw.PreferencesWindow (live-apply)
+    gtk4/gtk4_shortcuts.py       # Gtk.ShortcutsWindow from the shared SHORTCUTS table
 ```
 
-Two key boundaries:
+View modules reach the pure core with `from ..` and siblings with `from .gtk3_x`
+/ `from .gtk4_x`. The two view sub-packages never import each other.
 
 1. **The GTK3 layer never touches the filesystem directly.** All disk
    reads/writes/creation go through `model.py` (and `settings.py` for config).
@@ -46,30 +70,35 @@ Two key boundaries:
 
 `NotebookWindow` itself is assembled from mixins via multiple inheritance
 (`class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
-Gtk.Window)`) purely to keep each file readable — it is one class at runtime, so
-all methods share `self` and there is no behavioural difference from the former
-single `window.py`. The future intent (per the maintainer) is that a `gtk4_`
-module set could sit alongside the `gtk3_` one, selectable from Preferences,
-reusing the entire GTK-free core.
+Gtk.ApplicationWindow)`) purely to keep each file readable — it is one class at
+runtime, so all methods share `self`. The GTK 4 front-end (now realized in
+`qdvc/gtk4/`, selectable via `--gtk4` or the `ui_backend` preference) sits
+alongside the `gtk3_` set and reuses the entire GTK-free core.
 
 Run modes:
 
 ```bash
-python3 qdvc_markdown_notebook.py /path/to/data   # sys.argv[1] = root folder
+python3 qdvc_markdown_notebook.py /path/to/data   # open a folder (GTK3 default)
 python3 qdvc_markdown_notebook.py                 # empty; user opens via Ctrl+O
+python3 qdvc_markdown_notebook.py --gtk4 [folder] # force the GTK4 front-end
+python3 qdvc_markdown_notebook.py --gtk3 [folder] # force the GTK3 front-end
 ```
 
-Run from the directory containing both the script and `qdvc/` (the
-script imports the package by name).
+The entry point is a thin dispatcher (spec §3): backend = flag → `ui_backend`
+config → default `gtk3`. Run from the directory containing both the script and
+`qdvc/`.
 
 ## 2. Runtime dependencies
 
-- Python 3.6+ (uses f-strings; the walrus `:=` in the highlighter needs 3.8+).
-- PyGObject with GTK 3 typelibs: `python3-gi`, `gir1.2-gtk-3.0`.
-- `Pango`, `Gdk`, `GLib`, `Gio` come with the GTK 3 introspection data.
-- **PyYAML** — *optional*. Used only by `settings.py` to persist user settings.
-  If it is missing the app still runs with default settings; nothing is saved
-  and a one-line warning is printed to stderr. Install with `pip install pyyaml`
+- Python 3.10+ (the common spec §4 target; the code uses f-strings and, in the
+  highlighter, the walrus `:=`).
+- PyGObject and **exactly one** of the two toolkits at runtime:
+  - GTK 3 (`python3-gi`, `gir1.2-gtk-3.0`) — the default front-end; or
+  - GTK 4 + libadwaita (`gir1.2-gtk-4.0`, `gir1.2-adw-1`) — the modern one.
+- `Pango`, `Gdk`, `GLib`, `Gio` come with the GTK introspection data.
+- **PyYAML** — used by `settings.py` to persist user settings. If it is missing
+  the app still runs with default settings; nothing is saved and a one-line
+  warning is printed to stderr. Install with `pip install pyyaml`
   (Debian/MATE: `sudo apt install python3-yaml`).
 
 There is **no** markdown-rendering library (e.g. `markdown`, `mistune`). This is
@@ -778,21 +807,42 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
   `on_toggle_statusbar` set the visibility of `self.toolbar` / `self.statusbar_box`
   from the `Gtk.CheckMenuItem` state.
 
-## 5. Known deviations from the original spec
+## 5. Deviations from the common spec
 
-- **Quit shortcut.** The spec listed `Ctrl+S` for both Save and Quit. That is a
-  collision, so Quit is bound to the conventional **Ctrl+Q**. If you truly want
-  Ctrl+S for Quit, change the accelerator on `mi_quit` — but you'll lose Save.
+Stated explicitly with rationale, per the spec's §12 requirement. The spec URL
+is in the header above.
+
+- **Quit shortcut.** The family default is `Ctrl+Q` (spec §10), which is what
+  the app uses. (An older, app-internal spec draft listed `Ctrl+S` for Quit,
+  colliding with Save; that is intentionally not followed.)
 - **Rename.** There is no free-form rename UI; renaming happens via **Slugify**,
   which derives the filename from the note's H1. New notes start as `Untitled.md`,
-  `Untitled 1.md`, … A general inline-rename remains a natural next feature (§7).
+  `Untitled 1.md`, … A general inline-rename (spec default `F2`) remains a
+  natural next feature (§7).
+- **`Adw.TabView` for editor tabs (GTK 4).** Spec §9 names `Adw.ViewStack` +
+  `Adw.ViewSwitcher` for a *multi-view* app. This app's tabs are **documents**,
+  not top-level app views, so the HIG-correct widget is `Adw.TabView` /
+  `Adw.TabBar`; `ViewStack` is for switching app modes, which this app has none
+  of. See MAINTENANCE_GTK3_GTK4.md §4.
+- **`settings.py` config API shape.** Spec §5 describes a thin `get(key,
+  default)` / `set(key, value)` wrapper over a `DEFAULTS` dict. This app instead
+  uses a typed `Settings` class with per-field validated accessors and a
+  `SCHEMA_VERSION`; unknown keys are preserved via `_extra` for the same
+  no-migration-on-new-key robustness the spec seeks. Retained because it predates
+  the shared spec and the validation is valuable; the outcome (YAML at the XDG
+  path, forward-compatible) matches the spec's intent.
+- **Config subdirectory migration.** The canonical path is
+  `~/.config/qdvc-markdown-notebook/config.yml` (spec §5). Configs written by
+  pre-spec builds under the old `qdvcmdnb` subdirectory are migrated once on first
+  load (`_migrate_legacy_config`).
 - **Desktop integration.** The app ships no installer; the base `.desktop` file
-  is set up by hand (see README). `Icon=accessories-text-editor` is a stock
-  freedesktop icon present on typical GNOME/MATE installs. *However*, choosing a
-  custom icon set in Preferences makes the app install the icons into the user's
-  hicolor theme and **rewrite the per-user `.desktop` file's `Icon=` line**
-  itself (`update_desktop_icon`), so a hand-edited `Icon=` line may be overwritten
-  on the next icon-set change. See §3.0a / §3.3.
+  is set up by hand (see README). Choosing a custom icon set in Preferences makes
+  the app install icons into the user's hicolor theme and **rewrite the per-user
+  `.desktop` file's `Icon=` line** itself (`update_desktop_icon`), so a
+  hand-edited `Icon=` line may be overwritten on the next icon-set change.
+- **Not yet present.** No `validate()` on the model (spec §6, a SHOULD — the flat
+  markdown workspace has little to validate); no `Gtk.Calendar` date entry (spec
+  §8.2 — the app has no date-entry fields).
 
 ## 6. Gotchas
 
@@ -872,7 +922,7 @@ testable without a display, since the core modules (`config.py`, `model.py`,
 Syntax-check everything:
 
 ```bash
-python3 -m py_compile qdvc_markdown_notebook.py qdvc/*.py
+python3 -m py_compile qdvc_markdown_notebook.py qdvc/*.py qdvc/gtk3/*.py qdvc/gtk4/*.py
 ```
 
 The data layer can be exercised directly, e.g.:

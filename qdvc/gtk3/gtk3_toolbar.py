@@ -12,8 +12,8 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # noqa: E402
 
-from .settings import TOOLBAR_TEXT_BESIDE
-from .strings import Toolbar as S
+from ..settings import TOOLBAR_TEXT_BESIDE
+from ..strings import Toolbar as S
 
 
 class ToolbarMixin:

@@ -16,16 +16,16 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gdk, GLib  # noqa: E402
 
-from . import model
-from .config import (
+from .. import model
+from ..config import (
     APP_NAME,
     NODE_ALL_NOTES,
     NODE_SUBFOLDERS,
     NODE_SUBFOLDER,
 )
-from .settings import icon_set_files, APP_ICON_NAME
+from ..settings import icon_set_files, APP_ICON_NAME
 from .gtk3_preferences import PreferencesDialog
-from .strings import APP_COMMENTS, Dialog as D
+from ..strings import APP_COMMENTS, Dialog as D
 
 
 class ActionsMixin:
@@ -558,11 +558,17 @@ class ActionsMixin:
 
     def on_quit(self, _widget):
         # Menu "Quit" handler. Confirm any unsaved tabs first; save the session,
-        # then end the GTK event loop (Gtk.main_quit stops Gtk.main()).
+        # then close the window. Under Gtk.Application, closing the last window
+        # ends the application; if run standalone (no application), fall back to
+        # Gtk.main_quit().
         if self._confirm_close_all() is False:
             return
         self._save_session()
-        Gtk.main_quit()
+        app = self.get_application()
+        if app is not None:
+            self.destroy()
+        else:
+            Gtk.main_quit()
 
     def _on_delete_event(self, _widget, _event):
         # "delete-event" fires when the user clicks the window-manager close

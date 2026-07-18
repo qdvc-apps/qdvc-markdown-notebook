@@ -1,7 +1,7 @@
 """
 qdvc — internal package for QDVC Markdown Notebook.
 
-The package is split into two layers so a future GTK4 view could reuse the lower
+The package is split into two layers so the GTK4 view can reuse the lower
 layer unchanged:
 
 GTK-free core (data / application logic, no GTK import — unit-testable headless):
@@ -16,8 +16,9 @@ GTK-free core (data / application logic, no GTK import — unit-testable headles
                     (no GTK). The gtk3_ modules import their labels/messages from
                     here instead of hard-coding literals.
 
-GTK3 view / controller (all modules prefaced ``gtk3_``; replace these for a
-different toolkit, e.g. a future ``gtk4_`` set):
+GTK3 view / controller (nested sub-package ``qdvc.gtk3``; every module prefaced
+``gtk3_``):
+    gtk3_app          NotebookApp: the Gtk.Application (id, icon, prgname).
     gtk3_highlighter  MarkdownHighlighter (GTK TextBuffer tagging).
     gtk3_editortab    EditorTab: one tab's editor widget + per-tab state.
     gtk3_preferences  PreferencesDialog: the *view/controller* for settings —
@@ -28,15 +29,30 @@ different toolkit, e.g. a future ``gtk4_`` set):
     gtk3_actions      ActionsMixin: user-action handlers, context menus, dialogs.
     gtk3_window       NotebookWindow: the top-level window that composes the
                       mixins above (view + controller core).
+    gtk3_shortcuts    Wires the shared ui_prefs.SHORTCUTS table into the GTK3
+                      accelerators / mnemonics.
 
-Note the deliberate pairing: ``settings`` (model) ↔ ``gtk3_preferences`` (view).
+GTK4 / libadwaita view (nested sub-package ``qdvc.gtk4``; every module prefaced
+``gtk4_``): gtk4_app, gtk4_window, gtk4_actions, gtk4_preferences,
+gtk4_shortcuts, plus editor/preview/highlighter helpers. Follows the GNOME HIG
+and reuses the pure core unchanged (spec §9).
+
+Pure UI helpers shared by both front-ends (no GTK):
+    ui_prefs        SHORTCUTS table (single source of truth for keybindings,
+                    spec §10) + toolkit-independent UI helpers.
+    platform_utils  Launch system apps (viewer, editor, file manager; spec §11).
+
+Note the deliberate pairing: ``settings`` (model) ↔ ``gtk3_preferences`` /
+``gtk4_preferences`` (views).
 """
 
+from .config import APP_ID, APP_NAME  # noqa: F401  (re-export)
+
+__version__ = "0.1.0"
+
 __all__ = [
+    "APP_ID", "APP_NAME", "__version__",
     # GTK-free core
     "config", "model", "settings", "pango_markdown", "strings",
-    # GTK3 view/controller
-    "gtk3_highlighter", "gtk3_editortab", "gtk3_preferences",
-    "gtk3_menubar", "gtk3_toolbar", "gtk3_panes", "gtk3_actions",
-    "gtk3_window",
+    "ui_prefs", "platform_utils",
 ]

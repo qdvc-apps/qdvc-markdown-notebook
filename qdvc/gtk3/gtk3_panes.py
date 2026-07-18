@@ -19,15 +19,15 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Pango  # noqa: E402
 
-from . import model
-from .config import (
+from .. import model
+from ..config import (
     NODE_ALL_NOTES,
     NODE_INBOX,
     NODE_EMPTY_NOTES,
     NODE_SUBFOLDERS,
     NODE_SUBFOLDER,
 )
-from .strings import Sidebar as S
+from ..strings import Sidebar as S
 
 
 class PanesMixin:
