@@ -14,7 +14,7 @@ It points at a folder of `.md` files and gives you:
 Plus a menu bar, toolbar (New / Save / Refresh / Slugify / Card view / Read-only / Preview / Outline), and a status bar.
 
 - Vibe-coding details in [vibe-coding/](vibe-coding/)
-- See [MAINTENANCE.md](MAINTENANCE.md) for architecture and maintainer notes.
+- See [docs/MAINTENANCE.md](docs/MAINTENANCE.md) for architecture and maintainer notes.
 
 ## Usage
 
@@ -60,7 +60,7 @@ StartupWMClass=qdvc-markdown-notebook
 
 Notes:
 - Replace the `Exec` path with the absolute path to `qdvc_markdown_notebook.py`.
-  The script must be able to find its `qdvcmdnb_lib/` package alongside it, which
+  The script must be able to find its `qdvc/` package alongside it, which
   it will as long as you point `Exec` at the script in its own directory.
 - `%F` lets the launcher pass a folder you drop onto the icon as the working
   folder argument; launching with no argument starts empty (use Ctrl+O).

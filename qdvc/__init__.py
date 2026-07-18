@@ -1,5 +1,5 @@
 """
-qdvcmdnb_lib — internal package for QDVC Markdown Notebook.
+qdvc — internal package for QDVC Markdown Notebook.
 
 The package is split into two layers so a future GTK4 view could reuse the lower
 layer unchanged:

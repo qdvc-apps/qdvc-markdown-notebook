@@ -15,7 +15,7 @@ whose modules are all prefaced `gtk3_`.
 
 ```
 qdvc_markdown_notebook.py        # entry point: argv parsing, builds window, Gtk.main()
-qdvcmdnb_lib/
+qdvc/
     __init__.py
     # ---- GTK-free core (no GTK import; unit-testable headless) ----
     config.py                    # constants, sort modes, NODE_* kinds, ALL_NOTES sentinel
@@ -59,7 +59,7 @@ python3 qdvc_markdown_notebook.py /path/to/data   # sys.argv[1] = root folder
 python3 qdvc_markdown_notebook.py                 # empty; user opens via Ctrl+O
 ```
 
-Run from the directory containing both the script and `qdvcmdnb_lib/` (the
+Run from the directory containing both the script and `qdvc/` (the
 script imports the package by name).
 
 ## 2. Runtime dependencies
@@ -98,8 +98,12 @@ now uses the `NODE_*` kinds instead.)
 ### 3.0a `settings.py` — persistent user settings (core; no GTK)
 This is the **model** side of preferences (the *view* is `gtk3_preferences.py`,
 §3.2b): it defines what is stored and how it is loaded/validated/saved.
-- Stores settings as YAML at `$XDG_CONFIG_HOME/qdvcmdnb/config.yml`, falling back
-  to `~/.config/qdvcmdnb/config.yml`. Resolve via `config_dir()` / `config_path()`.
+- Stores settings as YAML at `$XDG_CONFIG_HOME/qdvc-markdown-notebook/config.yml`,
+  falling back to `~/.config/qdvc-markdown-notebook/config.yml`. Resolve via
+  `config_dir()` / `config_path()`. Configs written by pre-spec-§5 builds under the
+  old `qdvcmdnb` subdirectory are migrated once, on first `load()`, via
+  `_migrate_legacy_config()` (`_legacy_config_path()` locates the old file); it is
+  best-effort and never raises.
 - `Settings` holds `editor_font`, `code_font`, and `preview_font` (Pango
   font-description strings), `editor_line_spacing` and `preview_line_spacing`
   (ints, pixels of extra inter-line space, clamped to `[MIN_LINE_SPACING,
@@ -372,7 +376,8 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
   view-toggle state machine (read-only / preview / card view / outline) with its
   menu↔toolbar sync, tab management, the status bar, `open_folder`, and the
   recent-workspace menu.
-- `gtk3_menubar.py` (`MenuBarMixin`) — `_build_menubar`, `_icon_menu_item`.
+- `gtk3_menubar.py` (`MenuBarMixin`) — `_build_menubar`, `_icon_menu_item`,
+  `_resolve_icon_name`.
 - `gtk3_toolbar.py` (`ToolbarMixin`) — `_build_toolbar`, `_toolbar_separator`,
   `_toolbar_style_enum`, `_apply_toolbar_style`.
 - `gtk3_panes.py` (`PanesMixin`) — `_build_sidebar` / `_build_notelist` /
@@ -419,7 +424,13 @@ new tabs), and restores the pane-2 note selection (`last_selected_note`).
 
 Menu items use `_icon_menu_item(label, icon_name)`, which builds a
 `Gtk.ImageMenuItem` (deprecated in GTK3 but the idiomatic MATE-era way to show
-icons in menus; it falls back to a plain `MenuItem`). Icons are stock freedesktop
+icons in menus; it falls back to a plain `MenuItem`) and calls
+`set_always_show_image(True)` so the icon renders even when the desktop's global
+`gtk-menu-images` setting is off. The icon name is first passed through
+`_resolve_icon_name(icon_name)`, which returns it when the current
+`Gtk.IconTheme` has it, else a per-name fallback from `_ICON_FALLBACKS` (e.g.
+`help-about` → `dialog-information`) when the theme has that, so a missing themed
+icon never leaves a broken slot (spec §8). Icons are stock freedesktop
 names: New note=`document-new`, Save note=`document-save`, Refresh
 note=`view-refresh`, Open workspace=`folder-open`, Refresh
 workspace=`view-refresh`, Open recent workspace=`document-open-recent`, New
@@ -861,13 +872,13 @@ testable without a display, since the core modules (`config.py`, `model.py`,
 Syntax-check everything:
 
 ```bash
-python3 -m py_compile qdvc_markdown_notebook.py qdvcmdnb_lib/*.py
+python3 -m py_compile qdvc_markdown_notebook.py qdvc/*.py
 ```
 
 The data layer can be exercised directly, e.g.:
 
 ```python
-from qdvcmdnb_lib import model, config
+from qdvc import model, config
 notes = model.collect_notes("/some/folder")
 ordered = model.sort_notes(notes, config.SORT_DATE_NEW)
 ```

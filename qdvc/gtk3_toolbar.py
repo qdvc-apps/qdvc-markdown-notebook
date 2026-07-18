@@ -4,7 +4,7 @@ gtk3_toolbar.py — GTK3 toolbar construction + styling for NotebookWindow.
 A **mixin** combined into NotebookWindow in gtk3_window.py. GTK3-specific; relies
 on handlers/attributes defined across the window and its other mixins.
 
-User-facing labels/tooltips come from qdvcmdnb_lib.strings (Toolbar namespace).
+User-facing labels/tooltips come from qdvc.strings (Toolbar namespace).
 """
 
 import gi

@@ -8,7 +8,7 @@ live directly on the window. The window holds a Gtk.Notebook of these.
 The tab label is a small horizontal box with a title and a close button, in the
 style of Caja / typical GTK file managers.
 
-User-facing text comes from qdvcmdnb_lib.strings (Editor namespace).
+User-facing text comes from qdvc.strings (Editor namespace).
 """
 
 import os

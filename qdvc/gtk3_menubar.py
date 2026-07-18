@@ -6,7 +6,7 @@ window for readability. It is combined into NotebookWindow in gtk3_window.py and
 relies on attributes/handlers defined there and in the other mixins (e.g.
 self.on_new_note, self.settings). No standalone behaviour; GTK3-specific.
 
-All user-facing text comes from qdvcmdnb_lib.strings (the Menu namespace) so it
+All user-facing text comes from qdvc.strings (the Menu namespace) so it
 can be translated in one place.
 """
 
@@ -243,8 +243,36 @@ class MenuBarMixin:
         menubar.append(help_item)
         return menubar
 
-    @staticmethod
-    def _icon_menu_item(label, icon_name):
+    # Per-name fallbacks for themed icons that some minimal themes omit, so a
+    # missing icon never leaves a broken/blank slot (spec §8). Each maps a
+    # possibly-absent name to a near-universal stock name.
+    _ICON_FALLBACKS = {
+        "help-about": "dialog-information",
+        "document-open-recent": "document-open",
+        "document-properties": "preferences-system",
+        "tab-new": "document-new",
+    }
+
+    @classmethod
+    def _resolve_icon_name(cls, icon_name):
+        """
+        Return icon_name if the current icon theme has it, else a sensible
+        fallback (or the original name if none is registered). Best-effort: if
+        the theme can't be queried, the original name is returned unchanged.
+        """
+        try:
+            theme = Gtk.IconTheme.get_default()
+            if theme.has_icon(icon_name):
+                return icon_name
+            fallback = cls._ICON_FALLBACKS.get(icon_name)
+            if fallback and theme.has_icon(fallback):
+                return fallback
+        except Exception:
+            pass
+        return icon_name
+
+    @classmethod
+    def _icon_menu_item(cls, label, icon_name):
         """
         Build a menu item with a leading icon, GNOME2/MATE style.
 
@@ -252,12 +280,15 @@ class MenuBarMixin:
         icons in menus, and a good fit for this app's MATE-era look). It pairs a
         label with a Gtk.Image built from a named theme icon at MENU size;
         set_always_show_image forces the icon to show even on themes that hide
-        menu icons by default. Falls back to a plain MenuItem (no icon) if
-        ImageMenuItem is unavailable on the running GTK build.
+        menu icons by default. The icon name is resolved against the current
+        theme with a graceful fallback (see _resolve_icon_name) so a missing
+        themed icon never leaves a broken slot. Falls back to a plain MenuItem
+        (no icon) if ImageMenuItem is unavailable on the running GTK build.
         """
         try:
             item = Gtk.ImageMenuItem(label=label)
-            img = Gtk.Image.new_from_icon_name(icon_name, Gtk.IconSize.MENU)
+            resolved = cls._resolve_icon_name(icon_name)
+            img = Gtk.Image.new_from_icon_name(resolved, Gtk.IconSize.MENU)
             item.set_image(img)
             item.set_always_show_image(True)
             return item

@@ -1,7 +1,7 @@
 """
 gtk3_preferences.py — the Preferences dialog for QDVC Markdown Notebook (GTK3).
 
-This is the *view* for the settings model (qdvcmdnb_lib.settings): the window
+This is the *view* for the settings model (qdvc.settings): the window
 that lets the user edit what settings.py stores. In the GNOME2 / MATE idiom this
 is "Preferences" (under the Edit menu). It is a tabbed dialog:
 
@@ -16,7 +16,7 @@ has Save and Cancel buttons — Save persists the settings to disk; Cancel (or
 closing the window) restores the values that were in effect when the dialog
 opened and re-applies them, discarding the live preview.
 
-User-facing text comes from qdvcmdnb_lib.strings (Prefs / Dialog namespaces).
+User-facing text comes from qdvc.strings (Prefs / Dialog namespaces).
 """
 
 import gi

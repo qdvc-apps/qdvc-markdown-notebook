@@ -4,11 +4,11 @@ gtk3_panes.py — GTK3 construction + data-binding for the four panes.
 A **mixin** combined into NotebookWindow in gtk3_window.py. Builds the sidebar
 (pane 1), note list (pane 2), editor host (pane 3, a Gtk.Notebook of EditorTabs),
 the headings-outline (pane 4), and the status bar; plus the reload / cell-render /
-selection helpers that populate panes 1, 2 and 4 from qdvcmdnb_lib.model.
+selection helpers that populate panes 1, 2 and 4 from qdvc.model.
 GTK3-specific; relies on attributes/handlers defined across the window and its
 other mixins.
 
-User-facing text comes from qdvcmdnb_lib.strings (Sidebar namespace).
+User-facing text comes from qdvc.strings (Sidebar namespace).
 """
 
 import os

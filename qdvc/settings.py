@@ -3,8 +3,11 @@ settings.py — persistent user settings for QDVC Markdown Notebook.
 
 Settings are stored as YAML at:
 
-    $XDG_CONFIG_HOME/qdvcmdnb/config.yml      (if XDG_CONFIG_HOME is set)
-    ~/.config/qdvcmdnb/config.yml             (otherwise)
+    $XDG_CONFIG_HOME/qdvc-markdown-notebook/config.yml   (if XDG_CONFIG_HOME is set)
+    ~/.config/qdvc-markdown-notebook/config.yml          (otherwise)
+
+Configs written by pre-spec builds under the old "qdvcmdnb" subdirectory are
+migrated once, on first load, to the canonical location above.
 
 The file is plain text, human-editable, and git-trackable. PyYAML is required;
 if it is missing we degrade gracefully to in-memory defaults (a warning is
@@ -89,8 +92,13 @@ DESKTOP_FILE_ID = "qdvc-markdown-notebook.desktop"
 SCHEMA_VERSION = 1
 MAX_RECENT = 10
 
-_CONFIG_SUBDIR = "qdvcmdnb"
+_CONFIG_SUBDIR = "qdvc-markdown-notebook"
 _CONFIG_FILENAME = "config.yml"
+
+# Legacy config subdirectory (pre-spec-§5 name). On load, if no config exists at
+# the canonical location but one exists here, it is migrated once (see _migrate_
+# legacy_config). Retained only for that one-time migration.
+_LEGACY_CONFIG_SUBDIR = "qdvcmdnb"
 
 _warned_no_yaml = False
 
@@ -109,6 +117,37 @@ def config_dir():
 def config_path():
     """Return the full path to the config file."""
     return os.path.join(config_dir(), _CONFIG_FILENAME)
+
+
+def _legacy_config_path():
+    """Return the full path to the pre-spec-§5 config file (old subdir name)."""
+    base = os.environ.get("XDG_CONFIG_HOME")
+    if not base:
+        base = os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, _LEGACY_CONFIG_SUBDIR, _CONFIG_FILENAME)
+
+
+def _migrate_legacy_config():
+    """
+    One-time migration: if no config exists at the canonical location but one
+    exists at the legacy "qdvcmdnb" location, copy it across so upgrading users
+    keep their settings. Best-effort — never raises; a failed migration just
+    leaves load() to fall back to defaults.
+    """
+    new_path = config_path()
+    if os.path.exists(new_path):
+        return
+    old_path = _legacy_config_path()
+    if not os.path.isfile(old_path):
+        return
+    try:
+        os.makedirs(config_dir(), exist_ok=True)
+        with open(old_path, "r", encoding="utf-8") as src:
+            data = src.read()
+        with open(new_path, "w", encoding="utf-8") as dst:
+            dst.write(data)
+    except OSError:
+        pass
 
 
 def icon_set_files(folder):
@@ -249,7 +288,7 @@ def _warn_no_yaml_once():
     global _warned_no_yaml
     if not _warned_no_yaml:
         sys.stderr.write(
-            "qdvcmdnb: PyYAML not installed; settings will not be persisted. "
+            "qdvc-markdown-notebook: PyYAML not installed; settings will not be persisted. "
             "Install it with: pip install pyyaml\n"
         )
         _warned_no_yaml = True
@@ -327,6 +366,7 @@ class Settings:
             _warn_no_yaml_once()
             return s
 
+        _migrate_legacy_config()
         path = config_path()
         try:
             with open(path, "r", encoding="utf-8") as fh:
@@ -334,7 +374,7 @@ class Settings:
         except FileNotFoundError:
             return s  # first run; defaults are fine
         except (OSError, yaml.YAMLError) as exc:
-            sys.stderr.write(f"qdvcmdnb: could not read config ({exc}); "
+            sys.stderr.write(f"qdvc-markdown-notebook: could not read config ({exc}); "
                              f"using defaults\n")
             return s
 
@@ -455,7 +495,7 @@ class Settings:
             os.replace(tmp, config_path())  # atomic on POSIX
             return True
         except (OSError, yaml.YAMLError) as exc:
-            sys.stderr.write(f"qdvcmdnb: could not write config ({exc})\n")
+            sys.stderr.write(f"qdvc-markdown-notebook: could not write config ({exc})\n")
             return False
 
     # ----------------------------------------------------- mutators ----- #

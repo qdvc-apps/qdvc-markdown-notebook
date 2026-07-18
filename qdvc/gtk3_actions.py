@@ -5,7 +5,7 @@ A **mixin** combined into NotebookWindow in gtk3_window.py. Holds the signal
 handlers and the operations they drive: note/file actions, the right-click and
 tab context menus, search, workspace open/close/refresh, preferences/about,
 session save, and the shared confirm/error dialogs. Business logic and disk I/O
-are delegated to qdvcmdnb_lib.model and .settings. GTK3-specific; relies on
+are delegated to qdvc.model and .settings. GTK3-specific; relies on
 attributes/widgets defined across the window and its other mixins.
 """
 
