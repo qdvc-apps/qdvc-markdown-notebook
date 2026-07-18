@@ -67,6 +67,29 @@ class ActionsMixin:
         self.add_action(goto)
         self._actions["goto-tab"] = goto
 
+        # open-recent takes a string parameter (the workspace folder path).
+        open_recent = Gio.SimpleAction.new(
+            "open-recent", GLib.VariantType.new("s"))
+        open_recent.connect("activate", self.on_open_recent)
+        self.add_action(open_recent)
+        self._actions["open-recent"] = open_recent
+
+        # Note context-menu actions. Each takes the note's path as a string
+        # target so one action serves every row (spec §9 action model). The
+        # move action's target is "src_path\ndest_path" (two paths, newline
+        # separated) since a Gio action takes a single parameter.
+        for name, handler in (
+            ("note-open-new-tab", self.on_note_open_new_tab),
+            ("note-slugify", self.on_note_slugify),
+            ("note-copy-path", self.on_note_copy_path),
+            ("note-show-in-files", self.on_note_show_in_files),
+            ("note-move", self.on_note_move),
+        ):
+            act = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
+            act.connect("activate", handler)
+            self.add_action(act)
+            self._actions[name] = act
+
     # --------------------------------------------------- helpers ------ #
     def _set_action_enabled(self, name, enabled):
         act = self._actions.get(name)

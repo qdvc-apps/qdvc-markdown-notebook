@@ -235,6 +235,7 @@ class Dialog:
 
     # Context-menu items.
     OPEN_IN_NEW_TAB = "Open in new tab"
+    SLUGIFY = "Slugify (rename from heading)"
     MOVE_TO_SUBFOLDER = "Move to subfolder"
     LOCATE_IN_SUBFOLDERS = "Locate in subfolders"
     COPY_FULL_PATH = "Copy full path"

@@ -137,6 +137,16 @@ class ActionsMixin:
             lambda _i: self._load_note_in_new_tab(model.Note(note_path)))
         menu.append(item_open)
 
+        # Slugify: rename the note from its level-1 heading. Enabled only when a
+        # short H1 is present (checked against the live buffer if the note is
+        # open in a tab, else the file on disk). A convenience here in GTK3
+        # (also on the toolbar); in GTK4 the context menu is the only route.
+        item_slug = self._icon_menu_item(D.SLUGIFY, "insert-text")
+        item_slug.set_sensitive(self._slug_available_for(note_path))
+        item_slug.connect(
+            "activate", lambda _i: self._slugify_note_path(note_path))
+        menu.append(item_slug)
+
         # "Move to subfolder" → a submenu listing every subfolder of the
         # workspace (plus the top level). Confirms before moving.
         item_move = self._icon_menu_item(D.MOVE_TO_SUBFOLDER, "folder-move")
@@ -371,6 +381,63 @@ class ActionsMixin:
             return
         # tab.note was updated in place by rename_note; refresh title + list.
         tab._refresh_title()
+        self._reload_notelist(select_path=new_path)
+        self.update_status()
+
+    def _content_for_note_path(self, note_path):
+        """Return the current text for the note at `note_path`: the live buffer
+        of an open tab if one holds it (so unsaved edits count), else the file on
+        disk. Returns None if it can't be read."""
+        abs_path = os.path.abspath(note_path)
+        for t in self._tabs:
+            if t.note is not None and os.path.abspath(t.note.path) == abs_path:
+                return t.get_content()
+        try:
+            return model.read_note(model.Note(note_path))
+        except (OSError, UnicodeDecodeError):
+            return None
+
+    def _slug_available_for(self, note_path):
+        """True if the note at `note_path` has a short H1 that slugifies to a
+        non-empty name (used to enable/disable the context-menu Slugify item)."""
+        content = self._content_for_note_path(note_path)
+        if content is None:
+            return False
+        heading = model.heading_for_slug(content)
+        return heading is not None and model.slugify(heading) != ""
+
+    def _slugify_note_path(self, note_path):
+        """Context-menu Slugify: rename the note at `note_path` from its H1.
+        Works whether or not the note is the active tab; updates any open tab
+        that shows it, and refreshes panes 1 and 2."""
+        content = self._content_for_note_path(note_path)
+        if content is None:
+            return
+        heading = model.heading_for_slug(content)
+        if heading is None:
+            return
+        slug = model.slugify(heading)
+        if not slug:
+            return
+
+        old_name = os.path.basename(note_path)
+        new_name = slug + ".md"
+        if not self._confirm(D.RENAME_TITLE,
+                             D.confirm_rename_body(old_name, new_name)):
+            return
+
+        # Rename via a throwaway Note, then repoint any open tab on that file.
+        note = model.Note(note_path)
+        try:
+            new_path = model.rename_note(note, slug)
+        except OSError as exc:
+            self._error_dialog(D.err_rename(exc))
+            return
+        old_abs = os.path.abspath(note_path)
+        for t in self._tabs:
+            if t.note is not None and os.path.abspath(t.note.path) == old_abs:
+                t.note = note  # rename_note updated it in place
+                t._refresh_title()
         self._reload_notelist(select_path=new_path)
         self.update_status()
 

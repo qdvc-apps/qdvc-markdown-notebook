@@ -517,6 +517,8 @@ Tab wiring:
   File). Right-click in the note list → `on_notelist_button_press` and right-click
   on a tab label → `_on_tab_context_menu` both build a popup via the shared
   `_build_note_context_menu(note_path, include_locate, tab)`: **Open in new tab**,
+  **Slugify** (`_slugify_note_path`; enabled only when the note — live buffer if
+  open, else the file on disk — has a short H1, via `_slug_available_for`),
   **Move to subfolder** (a submenu from `_build_move_submenu`), **Copy full path**,
   **Show in file browser**, several with icons. The tab variant passes
   `include_locate=True`, prepending **Locate in subfolders** (`_locate_note_in_panes`).

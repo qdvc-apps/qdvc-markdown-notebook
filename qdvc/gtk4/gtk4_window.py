@@ -32,10 +32,13 @@ from gi.repository import Gtk, Adw, Gio, GObject, GLib, Gdk, Pango  # noqa: E402
 from .. import model
 from .. import platform_utils
 from ..config import (
-    APP_NAME, SORT_ALPHA, SORT_DATE_NEW, SORT_DATE_OLD,
+    APP_NAME, STOCK_ICON_NAME, SORT_ALPHA, SORT_DATE_NEW, SORT_DATE_OLD,
     NODE_ALL_NOTES, NODE_INBOX, NODE_EMPTY_NOTES, NODE_SUBFOLDER,
 )
-from ..settings import Settings
+from ..settings import (
+    Settings, icon_set_files, install_icon_set, uninstall_icon_set,
+    update_desktop_icon, APP_ICON_NAME,
+)
 from ..strings import Sidebar as SB, Status, Menu, Dialog as D
 from .. import strings
 from .gtk4_actions import ActionsMixin
@@ -79,6 +82,9 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         self.set_default_size(1000, 640)
 
         self.settings = Settings.load()
+        # Apply a custom icon set (if configured) so the window/panel/Alt+Tab
+        # icon reflects it; falls back to the stock icon otherwise.
+        self._apply_icon_set()
         self.root_folder = None
         self.current_node = NODE_ALL_NOTES
         self.current_subfolder = None
@@ -98,6 +104,7 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         self._install_actions()
         self._build_ui()
         self._apply_fonts_to_all()
+        self._rebuild_recent_menu()
 
         # Reflect the remembered card-view state on its toggle action so the
         # header/menu show it; the note list is built with it below.
@@ -114,6 +121,59 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
 
         self._update_actions_sensitivity()
         self._update_status()
+
+    # ----------------------------------------------------- icon set -- #
+    def _apply_icon_set(self):
+        """
+        Apply a custom icon set from settings.icon_set_dir if configured, so the
+        window, MATE panel, and Alt+Tab show it (works even when running the
+        GTK 4 build under MATE). Mirrors the GTK 3 window's behaviour using
+        GTK 4 APIs:
+
+          1. install the icon-set files into the user's hicolor theme under
+             APP_ICON_NAME (pure settings.install_icon_set), and add the set
+             folder to the icon theme's search path so it resolves immediately;
+          2. rewrite the per-user .desktop file's Icon= line so external
+             launchers (panel, Alt+Tab) resolve it;
+          3. set the window + app-default icon name to APP_ICON_NAME.
+
+        When no/invalid set is configured, revert to the stock themed icon.
+        Every step is best-effort and falls back silently.
+        """
+        files = icon_set_files(self.settings.icon_set_dir)
+        if not files:
+            uninstall_icon_set(APP_ICON_NAME)
+            update_desktop_icon(STOCK_ICON_NAME, exec_path=self._script_path())
+            self._set_window_icon_name(STOCK_ICON_NAME)
+            return
+
+        if install_icon_set(self.settings.icon_set_dir, APP_ICON_NAME):
+            update_desktop_icon(APP_ICON_NAME, exec_path=self._script_path())
+        # Make the freshly installed icon resolvable in-process.
+        try:
+            theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+            theme.add_search_path(self.settings.icon_set_dir)
+        except Exception:
+            pass
+        self._set_window_icon_name(APP_ICON_NAME)
+
+    def _set_window_icon_name(self, name):
+        """Set both the app-wide default and this window's icon name (GTK 4
+        keeps both APIs; the default drives the panel/Alt+Tab association)."""
+        try:
+            Gtk.Window.set_default_icon_name(name)
+        except Exception:
+            pass
+        try:
+            self.set_icon_name(name)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _script_path():
+        """Absolute path to the entry-point script, for the .desktop Exec line."""
+        import sys
+        return os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else None
 
     # ------------------------------------------------------------- CSS -- #
     def _install_css(self):
@@ -172,10 +232,7 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         save_btn.set_action_name("win.save-note")
         header.pack_start(save_btn)
 
-        open_btn = Gtk.Button.new_from_icon_name("folder-open-symbolic")
-        open_btn.set_tooltip_text(Menu.OPEN_WORKSPACE)
-        open_btn.set_action_name("win.open-workspace")
-        header.pack_start(open_btn)
+        # (Open workspace lives in the primary menu, not the header.)
 
         # Primary menu (open-menu-symbolic, set_primary) with the HIG-mandated
         # final Preferences / Keyboard Shortcuts / About section.
@@ -236,6 +293,10 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         file_section.append(Menu.OPEN_WORKSPACE, "win.open-workspace")
         file_section.append(Menu.REFRESH_WORKSPACE, "win.refresh-workspace")
         file_section.append(Menu.CLOSE_WORKSPACE, "win.close-workspace")
+        # Recent workspaces submenu (refilled by _rebuild_recent_menu).
+        self._recent_menu = Gio.Menu()
+        file_section.append_submenu(Menu.OPEN_RECENT_WORKSPACE,
+                                    self._recent_menu)
         menu.append_section(None, file_section)
 
         tab_section = Gio.Menu()
@@ -260,24 +321,51 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
 
     def _build_content(self):
         # Sidebar | note list | (tabs | outline).
+        #
+        # Minimum widths: each pane child gets a width_request so that, when its
+        # visibility is on, it can never be dragged/collapsed to invisibility.
+        # We keep shrink disabled on the fixed-width panes (sidebar, note list,
+        # outline) so the user can't drag a handle past a child's minimum, and
+        # only the editor pane is allowed to absorb the slack on window resize.
+        MIN_SIDEBAR = 140
+        MIN_NOTELIST = 200
+        MIN_EDITOR = 320
+        MIN_OUTLINE = 160
+
+        sidebar = self._build_sidebar()
+        sidebar.set_size_request(MIN_SIDEBAR, -1)
+        notelist = self._build_notelist()
+        notelist.set_size_request(MIN_NOTELIST, -1)
+        editor = self._build_editor()
+        editor.set_size_request(MIN_EDITOR, -1)
+        outline = self._build_outline()
+        outline.set_size_request(MIN_OUTLINE, -1)
+
         outer = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        outer.set_shrink_start_child(False)
+        outer.set_shrink_start_child(False)   # sidebar can't shrink below min
+        outer.set_resize_start_child(False)   # sidebar keeps its width on resize
         outer.set_shrink_end_child(False)
-        outer.set_start_child(self._build_sidebar())
+        outer.set_start_child(sidebar)
 
         inner = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        inner.set_shrink_start_child(False)
-        inner.set_start_child(self._build_notelist())
+        inner.set_shrink_start_child(False)   # note list can't shrink below min
+        inner.set_resize_start_child(False)   # note list keeps its width
+        inner.set_shrink_end_child(False)
+        inner.set_start_child(notelist)
 
         editor_split = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        editor_split.set_start_child(self._build_editor())
-        editor_split.set_end_child(self._build_outline())
-        editor_split.set_shrink_end_child(False)
+        editor_split.set_start_child(editor)
+        editor_split.set_resize_start_child(True)   # editor absorbs slack
+        editor_split.set_end_child(outline)
+        editor_split.set_shrink_end_child(False)     # outline can't vanish
+        editor_split.set_resize_end_child(False)
         self._editor_split = editor_split
         self._outline_scroll.set_visible(False)
 
         inner.set_end_child(editor_split)
+        inner.set_resize_end_child(True)
         outer.set_end_child(inner)
+        outer.set_resize_end_child(True)
         outer.set_position(200)
         inner.set_position(280)
         editor_split.set_position(520)
@@ -353,6 +441,10 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         scroll.set_child(self.note_view)
         scroll.set_vexpand(True)
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        # Don't let a wide card row dictate the pane width: the scrolled window
+        # should not request its child's natural width, and rows are ellipsized
+        # (see _note_setup). Without this, a long card snippet forces pane 2 wide.
+        scroll.set_propagate_natural_width(False)
         box.append(scroll)
         return box
 
@@ -362,19 +454,38 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         box.set_margin_end(8)
         box.set_margin_top(4)
         box.set_margin_bottom(4)
+        # Labels ellipsize (never wrap) and don't request width, so a long title
+        # or card snippet can't force pane 2 wider (items 3/4). hexpand lets each
+        # label fill whatever width the pane actually has.
         title = Gtk.Label(xalign=0)
         title.add_css_class("heading")
+        title.set_ellipsize(Pango.EllipsizeMode.END)
+        title.set_hexpand(True)
+        title.set_max_width_chars(0)
+        title.set_width_chars(0)
         subtitle = Gtk.Label(xalign=0)
         subtitle.add_css_class("dim-label")
         subtitle.add_css_class("caption")
-        subtitle.set_wrap(True)
+        subtitle.set_ellipsize(Pango.EllipsizeMode.END)
+        subtitle.set_hexpand(True)
+        subtitle.set_max_width_chars(0)
+        subtitle.set_width_chars(0)
         box.append(title)
         box.append(subtitle)
         item.set_child(box)
 
+        # Right-click → note context menu. The gesture is created once per row
+        # widget here; _note_bind stashes the current note path on the box so
+        # the handler knows which note was clicked (rows are recycled).
+        gesture = Gtk.GestureClick()
+        gesture.set_button(3)  # secondary (right) button
+        gesture.connect("pressed", self._on_note_right_click, box)
+        box.add_controller(gesture)
+
     def _note_bind(self, _factory, item):
         note_item = item.get_item()
         box = item.get_child()
+        box._note_path = note_item.path
         title = box.get_first_child()
         subtitle = title.get_next_sibling()
         title.set_text(note_item.display_name)
@@ -390,6 +501,185 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         if not self.search_query:
             return True
         return model.note_matches(note_item.note, self.search_query.lower())
+
+    # ---- note context menu (pane 2 right-click) ----
+    def _on_note_right_click(self, gesture, _n_press, x, y, box):
+        """Build and pop up the note context menu at the click point. The note
+        path was stashed on the row box by _note_bind."""
+        note_path = getattr(box, "_note_path", None)
+        if not note_path:
+            return
+        menu = self._build_note_menu_model(note_path)
+        popover = Gtk.PopoverMenu.new_from_model(menu)
+        popover.set_parent(box)
+        popover.set_has_arrow(False)
+        rect = Gdk.Rectangle()
+        rect.x, rect.y, rect.width, rect.height = int(x), int(y), 1, 1
+        popover.set_pointing_to(rect)
+        popover.popup()
+
+    def _build_note_menu_model(self, note_path):
+        """Build the Gio.Menu for a note's context menu. Each item targets a
+        win.note-* action with the note path (moves also carry the destination).
+        Slugify is included and disabled when no short H1 is present."""
+        menu = Gio.Menu()
+
+        primary = Gio.Menu()
+        primary.append_item(self._targeted_item(
+            D.OPEN_IN_NEW_TAB, "win.note-open-new-tab", note_path))
+        primary.append_item(self._targeted_item(
+            D.SLUGIFY, "win.note-slugify", note_path))
+        # Move-to-subfolder submenu.
+        if self.root_folder:
+            move_menu = Gio.Menu()
+            cur_dir = os.path.abspath(os.path.dirname(note_path))
+            for rel in model.all_subfolders(self.root_folder):
+                dest = (self.root_folder if rel == ""
+                        else os.path.join(self.root_folder, rel))
+                if os.path.abspath(dest) == cur_dir:
+                    continue  # skip the folder it's already in
+                label = D.MOVE_SUBMENU_TOP_LEVEL if rel == "" else rel
+                target = note_path + "\n" + dest
+                move_menu.append_item(self._targeted_item(
+                    label, "win.note-move", target))
+            primary.append_submenu(D.MOVE_TO_SUBFOLDER, move_menu)
+        menu.append_section(None, primary)
+
+        secondary = Gio.Menu()
+        secondary.append_item(self._targeted_item(
+            D.COPY_FULL_PATH, "win.note-copy-path", note_path))
+        secondary.append_item(self._targeted_item(
+            D.SHOW_IN_FILE_BROWSER, "win.note-show-in-files", note_path))
+        menu.append_section(None, secondary)
+
+        # Disable Slugify when there's no short H1 to derive a name from.
+        self._set_action_enabled("note-slugify",
+                                 self._slug_available_for(note_path))
+        return menu
+
+    @staticmethod
+    def _targeted_item(label, action, target):
+        item = Gio.MenuItem.new(label, None)
+        item.set_action_and_target_value(action, GLib.Variant.new_string(target))
+        return item
+
+    def _content_for_note_path(self, note_path):
+        """Current text for a note: the live buffer of an open tab if one holds
+        it (so unsaved edits count), else the file on disk; None if unreadable."""
+        abs_path = os.path.abspath(note_path)
+        for v in self._views:
+            if v.note is not None and os.path.abspath(v.note.path) == abs_path:
+                return v.get_content()
+        try:
+            return model.read_note(model.Note(note_path))
+        except (OSError, UnicodeDecodeError):
+            return None
+
+    def _slug_available_for(self, note_path):
+        content = self._content_for_note_path(note_path)
+        if content is None:
+            return False
+        heading = model.heading_for_slug(content)
+        return heading is not None and model.slugify(heading) != ""
+
+    def _view_for_path(self, note_path):
+        abs_path = os.path.abspath(note_path)
+        for v in self._views:
+            if v.note is not None and os.path.abspath(v.note.path) == abs_path:
+                return v
+        return None
+
+    # ---- note context-menu action handlers ----
+    def on_note_open_new_tab(self, _action, param):
+        path = param.get_string()
+        v = self._new_tab(focus=True)
+        if v.load_note(model.Note(path)):
+            v.highlight_search(self.search_query)
+            page = self._page_for_view(v)
+            if page is not None:
+                page.set_title(v.title_text())
+            self._refresh_outline(v)
+        self._update_status()
+        self._update_actions_sensitivity()
+
+    def on_note_copy_path(self, _action, param):
+        path = param.get_string()
+        try:
+            self.get_clipboard().set(os.path.abspath(path))
+        except Exception:
+            pass
+
+    def on_note_show_in_files(self, _action, param):
+        path = param.get_string()
+        try:
+            Gtk.FileLauncher.new(Gio.File.new_for_path(
+                os.path.dirname(os.path.abspath(path)))).launch(self, None, None)
+        except Exception:
+            platform_utils.reveal_in_file_manager(path)
+
+    def on_note_slugify(self, _action, param):
+        note_path = param.get_string()
+        content = self._content_for_note_path(note_path)
+        if content is None:
+            return
+        heading = model.heading_for_slug(content)
+        if not heading:
+            return
+        base = model.slugify(heading)
+        if not base:
+            return
+        old_name = os.path.basename(note_path)
+
+        def after(ok):
+            if not ok:
+                return
+            note = model.Note(note_path)
+            try:
+                new_path = model.rename_note(note, base)
+            except OSError as exc:
+                self._error(D.err_rename(str(exc)))
+                return
+            # Repoint any open tab on this file.
+            v = self._view_for_path(note_path)
+            if v is not None:
+                v.note = note
+                page = self._page_for_view(v)
+                if page is not None:
+                    page.set_title(v.title_text())
+            self._reload_notelist(select_path=new_path)
+            self._update_status()
+
+        self._confirm("Rename note",
+                      D.confirm_rename_body(old_name, base + ".md"), after)
+
+    def on_note_move(self, _action, param):
+        src, dest = param.get_string().split("\n", 1)
+        name = os.path.basename(src)
+        label = os.path.relpath(dest, self.root_folder) if self.root_folder \
+            else dest
+        if label == ".":
+            label = D.MOVE_SUBMENU_TOP_LEVEL
+
+        def after(ok):
+            if not ok:
+                return
+            note = model.Note(src)
+            try:
+                new_path = model.move_note(note, dest)
+            except OSError as exc:
+                self._error(D.err_move(str(exc)))
+                return
+            v = self._view_for_path(src)
+            if v is not None:
+                v.note = note
+                page = self._page_for_view(v)
+                if page is not None:
+                    page.set_title(v.title_text())
+            self._reload_sidebar()
+            self._reload_notelist(select_path=new_path)
+            self._update_status()
+
+        self._confirm(D.MOVE_TITLE, D.confirm_move_body(name, label), after)
 
     # ---- editor (pane 3): Adw.TabView + Adw.TabBar ----
     def _build_editor(self):
@@ -818,8 +1108,36 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
                 page.set_title(view.title_text())
         self.settings.add_recent_folder(folder)
         self.settings.save()
+        self._rebuild_recent_menu()
         self._update_status()
         self._update_actions_sensitivity()
+
+    def on_open_recent(self, _action, param):
+        """Open a workspace chosen from the recent-workspaces submenu. The path
+        is the action's string parameter. If it no longer exists, show an error
+        and refresh the list (add_recent_folder prunes missing dirs)."""
+        path = param.get_string()
+        if not os.path.isdir(path):
+            self._error(D.recent_missing(path))
+            self._rebuild_recent_menu()
+            return
+        self.open_folder(path)
+
+    def _rebuild_recent_menu(self):
+        """Refill the recent-workspaces submenu from settings. Each entry is a
+        `win.open-recent` item carrying its folder path as the target value; an
+        empty list shows a single disabled placeholder."""
+        self._recent_menu.remove_all()
+        recents = self.settings.recent_folders
+        if not recents:
+            # A menu item with no action renders greyed-out (no target).
+            self._recent_menu.append(Menu.RECENT_NONE, None)
+            return
+        for folder in recents:
+            item = Gio.MenuItem.new(folder, None)
+            item.set_action_and_target_value(
+                "win.open-recent", GLib.Variant.new_string(folder))
+            self._recent_menu.append_item(item)
 
     def on_refresh_workspace(self, _action, _param):
         if not self.root_folder:
@@ -860,6 +1178,8 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         self._refresh_css()
         for view in self._views:
             view.apply_code_font(self.settings.code_font)
+        # Re-apply the custom icon set in case it changed.
+        self._apply_icon_set()
 
     def on_about(self, _action, _param):
         about = Adw.AboutWindow(transient_for=self) \
