@@ -73,6 +73,11 @@ MAX_TAB_TITLE_LENGTH = 80
 DEFAULT_REMEMBER_SORT = False
 DEFAULT_RESTORE_SESSION = False
 
+# Whether the pane-2 card view is on. Unlike remember_sort/restore_session this
+# is the *state itself* (not an opt-in flag): the last card-view choice is always
+# remembered and restored on launch. Default off.
+DEFAULT_CARD_VIEW = False
+
 # UI backend selection (spec §3). The dispatcher picks the front-end from a CLI
 # flag, then this stored value, then the default. Anything unrecognised falls
 # back to gtk3 via the validated `ui_backend` accessor.
@@ -348,6 +353,8 @@ class Settings:
         self.tab_title_length = DEFAULT_TAB_TITLE_LENGTH
         self.remember_sort = DEFAULT_REMEMBER_SORT
         self.restore_session = DEFAULT_RESTORE_SESSION
+        # Remembered card-view state (always restored on launch).
+        self.card_view = DEFAULT_CARD_VIEW
         # UI backend ("gtk3"/"gtk4"); read via the validated `ui_backend`
         # property so a hand-edited config can never yield an invalid value.
         self._ui_backend = DEFAULT_UI_BACKEND
@@ -424,6 +431,8 @@ class Settings:
             data.get("remember_sort"), self.remember_sort)
         self.restore_session = _coerce_bool(
             data.get("restore_session"), self.restore_session)
+        self.card_view = _coerce_bool(
+            data.get("card_view"), self.card_view)
 
         # ui_backend is stored raw and validated on read (see the property).
         ui_backend = data.get("ui_backend")
@@ -465,8 +474,8 @@ class Settings:
         known = {"version", "editor_font", "code_font", "preview_font",
                  "editor_line_spacing", "preview_line_spacing",
                  "toolbar_style", "tab_title_length", "remember_sort",
-                 "restore_session", "ui_backend", "icon_set_dir", "sort_mode",
-                 "last_workspace", "last_open_notes", "last_node",
+                 "restore_session", "card_view", "ui_backend", "icon_set_dir",
+                 "sort_mode", "last_workspace", "last_open_notes", "last_node",
                  "last_subfolder", "last_selected_note", "recent_folders"}
         self._extra = {k: v for k, v in data.items() if k not in known}
 
@@ -483,6 +492,7 @@ class Settings:
             "tab_title_length": self.tab_title_length,
             "remember_sort": self.remember_sort,
             "restore_session": self.restore_session,
+            "card_view": self.card_view,
             "ui_backend": self.ui_backend,
             "icon_set_dir": self.icon_set_dir,
             "sort_mode": self.sort_mode,
@@ -549,6 +559,9 @@ class Settings:
 
     def set_restore_session(self, value):
         self.restore_session = _coerce_bool(value, self.restore_session)
+
+    def set_card_view(self, value):
+        self.card_view = _coerce_bool(value, self.card_view)
 
     @property
     def ui_backend(self):

@@ -31,6 +31,8 @@ from ..settings import (
     MAX_LINE_SPACING,
     MIN_TAB_TITLE_LENGTH,
     MAX_TAB_TITLE_LENGTH,
+    UI_BACKEND_GTK3,
+    UI_BACKEND_GTK4,
 )
 from ..strings import Prefs as P, Dialog as D
 
@@ -235,6 +237,32 @@ class PreferencesDialog(Gtk.Dialog):
 
         box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
+        # --- UI backend (GTK 3 / GTK 4) selector (spec §3: MUST be exposed from
+        # both UIs' Preferences). Unlike the live-preview controls above, the
+        # backend change only takes effect on the next launch, so it is written
+        # straight to settings (persisted immediately) and is *not* part of the
+        # Cancel snapshot/restore. A small hint states the restart requirement.
+        backend_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        backend_box.add(Gtk.Label(label=P.UI_BACKEND_LABEL, xalign=0.0))
+        self._radio_gtk3 = Gtk.RadioButton.new_with_label_from_widget(
+            None, P.UI_BACKEND_GTK3)
+        self._radio_gtk4 = Gtk.RadioButton.new_with_label_from_widget(
+            self._radio_gtk3, P.UI_BACKEND_GTK4)
+        if self.settings.ui_backend == UI_BACKEND_GTK4:
+            self._radio_gtk4.set_active(True)
+        else:
+            self._radio_gtk3.set_active(True)
+        self._radio_gtk3.connect("toggled", self._on_ui_backend_toggled)
+        self._radio_gtk4.connect("toggled", self._on_ui_backend_toggled)
+        backend_box.add(self._radio_gtk3)
+        backend_box.add(self._radio_gtk4)
+        hint = Gtk.Label(xalign=0.0)
+        hint.set_markup(f"<small>{P.UI_BACKEND_SUBTITLE}</small>")
+        backend_box.add(hint)
+        box.add(backend_box)
+
+        box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+
         # --- custom icon set ---
         # A Gtk.FileChooserButton in SELECT_FOLDER mode shows the chosen folder
         # and pops up a picker; "file-set" fires once a folder is chosen.
@@ -287,6 +315,19 @@ class PreferencesDialog(Gtk.Dialog):
         # As above, for the restore-session option.
         self.settings.set_restore_session(btn.get_active())
         self._on_apply()
+
+    def _on_ui_backend_toggled(self, btn):
+        # Radio "toggled" fires for both the newly-active and newly-inactive
+        # button; act only on the activation. The backend change takes effect on
+        # the next launch, so there is nothing to live-apply — we persist it
+        # straight away (and deliberately keep it out of the Cancel snapshot, so
+        # a Cancel does not undo an explicit backend choice).
+        if not btn.get_active():
+            return
+        backend = (UI_BACKEND_GTK4 if btn is self._radio_gtk4
+                   else UI_BACKEND_GTK3)
+        self.settings.set_ui_backend(backend)
+        self.settings.save()
 
     def _on_icon_set_chosen(self, chooser):
         # "file-set" → store the chosen folder path (get_filename); empty string

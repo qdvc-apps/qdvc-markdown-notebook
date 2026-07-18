@@ -39,7 +39,7 @@ tags — which happen to use the same API in GTK 3 and GTK 4.
 | Command model | per-widget `connect("activate")` + `Gtk.AccelGroup` | one `Gio.SimpleAction` per command under `win.`; menu + button reference it by name |
 | Accelerators | `add_accelerator(...)` from `ui_prefs` via `gtk3_shortcuts.add_menu_accel` | `Gtk.Application.set_accels_for_action` from `ui_prefs` in `gtk4_app` |
 | Menu | `Gtk.MenuBar` with `Gtk.ImageMenuItem`s | primary `Gtk.MenuButton` (`open-menu-symbolic`, `set_primary(True)`) + `Gio.Menu` |
-| View toggles | `Gtk.ToggleToolButton` + `Gtk.CheckMenuItem` synced pair | stateful boolean `Gio.SimpleAction`s bound to `Gtk.ToggleButton` + menu items |
+| View toggles | `Gtk.ToggleToolButton` + `Gtk.CheckMenuItem` synced pair | stateful boolean `Gio.SimpleAction`s bound to `Gtk.ToggleButton` + menu items; the preview toggle uses a spectacles/reading-glasses icon (resolved with a fallback chain) so it doesn't resemble the copy icon |
 | Editor tabs | `Gtk.Notebook` of `EditorTab.widget`; hand-built tab label + close button | `Adw.TabView` + `Adw.TabBar`; `Adw.TabPage` owns the title/close |
 | Note list | `Gtk.TreeView` + `Gtk.ListStore` + cell-data-func | `Gtk.ListView` + `Gio.ListStore` of `NoteItem` + `Gtk.SignalListItemFactory`, inside a `Gtk.FilterListModel` + `Gtk.CustomFilter` |
 | Sidebar | `Gtk.TreeView` tree (`Gtk.TreeStore`) | `Gtk.ListView` + `Gio.ListStore` of `SidebarRow` + `Gtk.SingleSelection` |

@@ -139,7 +139,10 @@ This is the **model** side of preferences (the *view* is `gtk3_preferences.py`,
   MAX_LINE_SPACING]` via `_coerce_spacing`), `toolbar_style` (`"below"` or
   `"beside"`, the `TOOLBAR_TEXT_*` constants), `tab_title_length` (int clamped to
   `[MIN_TAB_TITLE_LENGTH, MAX_TAB_TITLE_LENGTH]` via `_coerce_int_range`),
-  `remember_sort` and `restore_session` (bools via `_coerce_bool`), `icon_set_dir`
+  `remember_sort` and `restore_session` (bools via `_coerce_bool`), `card_view`
+  (bool via `_coerce_bool` — the remembered pane-2 card-view state, always
+  restored on launch, default off), `ui_backend` (`"gtk3"`/`"gtk4"`, read via the
+  validated `ui_backend` property that falls back to `gtk3`), `icon_set_dir`
   (a folder path; `""` means the stock icon), `sort_mode` (a persisted `SORT_*`
   string, or `None`), `last_workspace` + `last_open_notes` (the previous session's
   folder and open-note paths, for restore-on-startup), `last_node` +
@@ -380,12 +383,18 @@ code font, and markdown-preview font, plus two `Gtk.SpinButton`s for editor and
 preview line spacing (range `MIN_LINE_SPACING`..`MAX_LINE_SPACING`). **Interface**:
 a radio pair for toolbar text below vs beside icons; a `Gtk.SpinButton` for the
 tab-title length (`MIN_TAB_TITLE_LENGTH`..`MAX_TAB_TITLE_LENGTH`); two
-`Gtk.CheckButton`s for *remember sort order* and *restore session*; and a
-`Gtk.FileChooserButton` (+ a Clear button) for the custom icon-set folder. It has
+`Gtk.CheckButton`s for *remember sort order* and *restore session*; a radio pair
+selecting the **UI backend** (GTK 3 / GTK 4, spec §3 — MUST be exposed from both
+UIs' Preferences); and a `Gtk.FileChooserButton` (+ a Clear button) for the
+custom icon-set folder. It has
 **Save** and **Cancel** buttons. Each control change applies **live** (mutates the
 shared `Settings` in memory and calls the window's `on_apply` to re-theme), but is
-*not* persisted until Save. The dialog snapshots all original values on open
-(`_original`, now ten fields); `run_modal()` runs the dialog and, on Save, calls
+*not* persisted until Save. **Exception:** the UI-backend radio only takes effect
+on the next launch, so `_on_ui_backend_toggled` writes it straight to disk
+(`settings.save()`) and it is deliberately **not** part of the `_original`
+snapshot, so a Cancel does not undo an explicit backend choice. The dialog
+snapshots the other original values on open
+(`_original`); `run_modal()` runs the dialog and, on Save, calls
 `settings.save()`, while on Cancel/close it restores the snapshot and re-applies
 (reverting the live preview). The window calls `dialog.run_modal()` rather than
 just constructing it.
@@ -659,7 +668,9 @@ UI is built in `_build_*` methods and assembled in `_build_ui()`:
   sensitive whenever a note is open), **Slugify** (`btn_slugify`, insensitive unless
   the active tab's live first line is a short H1 in edit mode, per
   `_update_slugify_sensitivity()`), `|` separator, **Card view** (`btn_cardview`,
-  `mail-attachment` icon, off by default — `on_toggle_card_view` flips
+  `mail-attachment` icon, default off but **remembered across runs** — seeded
+  from `settings.card_view` at startup and persisted by `_set_card_view` on every
+  change; `on_toggle_card_view` flips
   `self.card_view`, calls `_apply_card_view()`, and reloads keeping selection), `|`
   separator, **Read-only** (`btn_readonly`, active by default), **Preview**
   (`btn_preview`, `document-page-setup` icon, off by default; locks the Read-only

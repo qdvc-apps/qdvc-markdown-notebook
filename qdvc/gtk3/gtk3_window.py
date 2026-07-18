@@ -91,7 +91,7 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         self._note_select_guard = False   # suppress reselection feedback loops
         self.read_only = True             # (#1) start in read-only mode
         self.preview_mode = False         # rendered-markdown preview (all tabs)
-        self.card_view = False            # pane-2 card view (off by default)
+        self.card_view = bool(self.settings.card_view)  # remembered across runs
         self.outline_visible = False      # headings outline pane (pane 4)
         self.search_query = None          # active note-list search (None = off)
         self._search_no_results = False
@@ -111,6 +111,13 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         item = self._sort_items.get(self.sort_mode)
         if item is not None and not item.get_active():
             item.set_active(True)
+
+        # Reflect the remembered card-view state on both toggle widgets and
+        # apply it (guarded so the handlers don't re-fire). The note list is
+        # (re)built with the correct view when a workspace opens below.
+        if self.card_view:
+            self._sync_toggle(self.btn_cardview, self.mi_cardview, True)
+            self._apply_card_view()
 
         if root_folder:
             self.open_folder(os.path.abspath(root_folder))
@@ -379,6 +386,9 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         self.card_view = bool(value)
         self._sync_toggle(self.btn_cardview, self.mi_cardview, self.card_view)
         self._apply_card_view()
+        # Remember the choice across runs.
+        self.settings.set_card_view(self.card_view)
+        self.settings.save()
         # Re-render the note list, keeping the current selection.
         tab = self._active_tab()
         keep = tab.note.path if (tab and tab.note) else None

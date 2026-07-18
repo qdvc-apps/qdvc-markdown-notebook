@@ -27,7 +27,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, Gio, GObject, GLib, Pango  # noqa: E402
+from gi.repository import Gtk, Adw, Gio, GObject, GLib, Gdk, Pango  # noqa: E402
 
 from .. import model
 from .. import platform_utils
@@ -88,7 +88,7 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
             self.sort_mode = self.settings.sort_mode
         self.read_only = True
         self.preview_mode = False
-        self.card_view = False
+        self.card_view = bool(self.settings.card_view)  # remembered across runs
         self.outline_visible = False
         self.search_query = None
         self._views = []          # parallel to Adw.TabView pages
@@ -98,6 +98,11 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         self._install_actions()
         self._build_ui()
         self._apply_fonts_to_all()
+
+        # Reflect the remembered card-view state on its toggle action so the
+        # header/menu show it; the note list is built with it below.
+        if self.card_view:
+            self._set_toggle_state("toggle-card-view", True)
 
         # Start with one empty tab.
         self._new_tab(focus=False)
@@ -181,8 +186,16 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         header.pack_end(menu_btn)
 
         # View toggles promoted to the header (read-only / preview / outline).
+        # The preview toggle uses a "spectacles"/reading-glasses metaphor so it
+        # reads as "view the rendered document" and doesn't resemble the
+        # copy-to-clipboard icon. Not every theme ships a glasses glyph, so
+        # resolve against the running theme with a graceful fallback chain.
         preview_btn = Gtk.ToggleButton()
-        preview_btn.set_icon_name("view-paged-symbolic")
+        preview_btn.set_icon_name(self._resolve_icon_name(
+            "eyeglasses-symbolic",
+            ("eye-open-negative-filled-symbolic",
+             "view-reveal-symbolic",
+             "view-paged-symbolic")))
         preview_btn.set_tooltip_text(Menu.PREVIEW)
         preview_btn.set_action_name("win.toggle-preview")
         header.pack_end(preview_btn)
@@ -194,6 +207,25 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         header.pack_end(readonly_btn)
 
         return header
+
+    @staticmethod
+    def _resolve_icon_name(preferred, fallbacks=()):
+        """
+        Return `preferred` if the current icon theme has it, else the first
+        listed fallback the theme has, else `preferred` unchanged. Best-effort;
+        keeps a missing themed icon from leaving a broken slot (cf. the GTK 3
+        MenuBarMixin._resolve_icon_name helper).
+        """
+        try:
+            theme = Gtk.IconTheme.get_for_display(Gdk.Display.get_default())
+            if theme.has_icon(preferred):
+                return preferred
+            for name in fallbacks:
+                if theme.has_icon(name):
+                    return name
+        except Exception:
+            pass
+        return preferred
 
     def _build_primary_menu(self):
         menu = Gio.Menu()
@@ -664,6 +696,8 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
     def on_toggle_card_view(self, action, value):
         self.card_view = bool(value)
         action.set_state(value)
+        self.settings.set_card_view(self.card_view)
+        self.settings.save()
         keep = None
         view = self._active_view()
         if view and view.note:
