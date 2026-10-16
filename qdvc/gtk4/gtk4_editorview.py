@@ -17,6 +17,9 @@ Differences from GTK 3 (recorded in docs/MAINTENANCE_GTK3_GTK4.md):
     dirty flag and lets the window drive the Adw.TabPage title.
   * Fonts are applied via CSS (GTK 4 removed ``override_font``); the window owns
     a ``Gtk.CssProvider`` and this view exposes the CSS class names it uses.
+  * Both the editor and the preview are ``gtk4_textview.ContentTextView``s,
+    which centre a maximum-width text column and draw a box around each fenced
+    code block (same as GTK 3's gtk3_textview).
 """
 
 import gi
@@ -27,6 +30,7 @@ from gi.repository import Gtk, Pango, GLib  # noqa: E402
 from .. import model
 from .. import pango_markdown
 from .gtk4_highlighter import MarkdownHighlighter
+from .gtk4_textview import ContentTextView
 from ..strings import Editor as S
 
 UNTITLED_LABEL = S.UNTITLED
@@ -56,13 +60,9 @@ class EditorView:
         editor_scroll.set_hexpand(True)
         editor_scroll.set_vexpand(True)
         self.text_buffer = Gtk.TextBuffer()
-        self.text_view = Gtk.TextView.new_with_buffer(self.text_buffer)
+        self.text_view = ContentTextView(self.text_buffer)
         self.text_view.set_monospace(True)
         self.text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        self.text_view.set_left_margin(8)
-        self.text_view.set_right_margin(8)
-        self.text_view.set_top_margin(8)
-        self.text_view.set_bottom_margin(8)
         self.text_view.add_css_class("qdvc-editor")
 
         self.highlighter = MarkdownHighlighter(self.text_buffer,
@@ -84,14 +84,10 @@ class EditorView:
         preview_scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
                                   Gtk.PolicyType.AUTOMATIC)
         self.preview_buffer = Gtk.TextBuffer()
-        self.preview_view = Gtk.TextView.new_with_buffer(self.preview_buffer)
+        self.preview_view = ContentTextView(self.preview_buffer)
         self.preview_view.set_editable(False)
         self.preview_view.set_cursor_visible(False)
         self.preview_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        self.preview_view.set_left_margin(8)
-        self.preview_view.set_right_margin(8)
-        self.preview_view.set_top_margin(8)
-        self.preview_view.set_bottom_margin(8)
         self.preview_view.add_css_class("qdvc-preview")
         preview_scroll.set_child(self.preview_view)
         self.widget.add_named(preview_scroll, "preview")
@@ -125,14 +121,25 @@ class EditorView:
         self._update_view_mode()
 
     def _render_preview(self):
-        markup = pango_markdown.render(self.get_content(),
-                                       code_font=self._code_font)
-        self.preview_buffer.set_text("")
-        start = self.preview_buffer.get_start_iter()
+        """Render the content into the preview, segment by segment, noting the
+        lines each fenced code block lands on so the view can box it."""
+        segments = pango_markdown.render_blocks(self.get_content(),
+                                                code_font=self._code_font)
+        buf = self.preview_buffer
+        buf.set_text("")
+        blocks = []
         try:
-            self.preview_buffer.insert_markup(start, markup, -1)
+            for i, (kind, markup) in enumerate(segments):
+                if i:
+                    buf.insert(buf.get_end_iter(), "\n", -1)
+                first = buf.get_end_iter().get_line()
+                buf.insert_markup(buf.get_end_iter(), markup, -1)
+                if kind == pango_markdown.BLOCK_CODE:
+                    blocks.append((first, buf.get_end_iter().get_line()))
         except (TypeError, GLib.GError):  # pragma: no cover
-            self.preview_buffer.set_text(self.get_content())
+            buf.set_text(self.get_content())
+            blocks = []
+        self.preview_view.set_code_blocks(blocks)
 
     # ------------------------------------------------------------ data -- #
     def get_content(self):
@@ -158,7 +165,7 @@ class EditorView:
         self._loading = False
         self.note = note
         self.dirty = False
-        self.highlighter.highlight()
+        self._highlight()
         self._apply_search_highlight()
         if self.preview:
             self._render_preview()
@@ -222,14 +229,31 @@ class EditorView:
         if self.preview:
             self._render_preview()
 
+    # ------------------------------------------------------ layout -- #
+    def apply_content_width(self, max_width):
+        """Limit the editor and preview text column (px; None = no limit)."""
+        self.text_view.set_max_content_width(max_width)
+        self.preview_view.set_max_content_width(max_width)
+
+    def apply_editor_line_spacing(self, pixels):
+        self.text_view.set_line_spacing(pixels)
+
+    def apply_preview_line_spacing(self, pixels):
+        self.preview_view.set_line_spacing(pixels)
+
     # ---------------------------------------------------- internal -- #
     def _buffer_changed(self, _buffer):
         if self._loading:
             return
         self.dirty = True
-        self.highlighter.highlight()
+        self._highlight()
         self._apply_search_highlight()
         self._on_changed(self)
+
+    def _highlight(self):
+        """Re-tag the markdown and re-box the fenced code blocks."""
+        self.highlighter.highlight()
+        self.text_view.set_code_blocks(self.highlighter.code_blocks)
 
     def _on_key_pressed(self, _controller, keyval, _keycode, state):
         from gi.repository import Gdk

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=QDVC Markdown Notebook
+GenericName=Markdown Notebook
+Comment=Browse, search and edit a folder of Markdown notes
+Exec=@BINDIR@/qdvc-markdown-notebook %F
+Icon=qdvc.MarkdownNotebook
+Terminal=false
+Categories=Utility;TextEditor;
+Keywords=markdown;notes;notebook;md;editor;
+StartupNotify=true
+StartupWMClass=qdvc-markdown-notebook

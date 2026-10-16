@@ -57,16 +57,21 @@ def _attr_escape(s):
     return _xml_escape(s, {"'": "&#39;", '"': "&quot;"})
 
 
-def _code_span(escaped_body, code_font, background):
+def _code_span(escaped_body, code_font, background=None):
     """Build a Pango markup span for code, optionally with a specific font.
 
     When a code font is given we set it via `font_desc`; otherwise we fall back
-    to `<tt>` so the text is still monospace.
+    to `<tt>` so the text is still monospace. `background` (a colour) shades the
+    characters themselves, which suits inline code; fenced blocks pass None,
+    because the preview draws a box around the whole block instead.
     """
+    bg = f" background='{background}'" if background else ""
     if code_font:
-        return (f"<span font_desc='{_attr_escape(code_font)}' "
-                f"background='{background}'>{escaped_body}</span>")
-    return f"<tt><span background='{background}'>{escaped_body}</span></tt>"
+        return (f"<span font_desc='{_attr_escape(code_font)}'{bg}>"
+                f"{escaped_body}</span>")
+    if bg:
+        return f"<tt><span{bg}>{escaped_body}</span></tt>"
+    return f"<tt>{escaped_body}</tt>"
 
 
 def _inline(text, code_font=None):
@@ -87,24 +92,41 @@ def _inline(text, code_font=None):
     return out
 
 
-def render(text, code_font=None):
+# Segment kinds returned by render_blocks().
+BLOCK_TEXT = "text"
+BLOCK_CODE = "code"
+
+
+def render_blocks(text, code_font=None):
     """
-    Convert Markdown `text` to a Pango markup string. Always returns valid
-    markup (the result is safe to pass to set_markup / insert_markup).
+    Convert Markdown `text` to a list of (kind, markup) segments, where kind is
+    BLOCK_TEXT or BLOCK_CODE (the body of one fenced code block, fences
+    dropped). Joining the markups with "\n" gives exactly render(text). The
+    preview inserts the segments one by one so it knows which lines hold each
+    code block and can draw a box around them.
 
     If `code_font` (a Pango font-description string) is given, inline and fenced
     code use it; otherwise code falls back to a generic monospace (`<tt>`).
     """
     lines = text.split("\n")
-    out = []
+    segments = []
+    text_buf = []       # markup lines of the current run of ordinary text
     in_fence = False
     fence_buf = []
 
+    def flush_text():
+        if text_buf:
+            segments.append((BLOCK_TEXT, "\n".join(text_buf)))
+            text_buf.clear()
+
     def flush_fence():
         if fence_buf:
+            flush_text()
             body = _xml_escape("\n".join(fence_buf))
-            out.append(_code_span(body, code_font, "#f5f5f5"))
+            segments.append((BLOCK_CODE, _code_span(body, code_font)))
             fence_buf.clear()
+
+    out = text_buf  # ordinary lines are appended here
 
     for line in lines:
         if _FENCE_RE.match(line):
@@ -162,5 +184,16 @@ def render(text, code_font=None):
 
     if in_fence:  # unterminated fence: render what we have
         flush_fence()
+    flush_text()
+    return segments
 
-    return "\n".join(out)
+
+def render(text, code_font=None):
+    """
+    Convert Markdown `text` to a Pango markup string. Always returns valid
+    markup (the result is safe to pass to set_markup / insert_markup).
+
+    If `code_font` (a Pango font-description string) is given, inline and fenced
+    code use it; otherwise code falls back to a generic monospace (`<tt>`).
+    """
+    return "\n".join(markup for _kind, markup in render_blocks(text, code_font))

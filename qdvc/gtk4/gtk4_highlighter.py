@@ -23,6 +23,9 @@ class MarkdownHighlighter:
     def __init__(self, buffer, code_font="monospace 11"):
         self.buffer = buffer
         self._code_font = code_font
+        # (first_line, last_line) of each fenced block, refreshed by
+        # highlight(); the editor's text view draws a box around each.
+        self.code_blocks = []
         self._make_tags()
         self.set_code_font(code_font)
 
@@ -65,6 +68,7 @@ class MarkdownHighlighter:
         for name in rules.ALL_TAG_NAMES:
             buf.remove_tag_by_name(name, start, end)
         text = buf.get_text(start, end, True)
+        self.code_blocks = rules.fence_blocks(text)
         for tag_name, s_off, e_off in rules.iter_spans(text):
             s = buf.get_iter_at_offset(s_off)
             e = buf.get_iter_at_offset(e_off)

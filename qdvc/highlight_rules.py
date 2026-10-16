@@ -39,7 +39,9 @@ TAG_SPECS.update({
     "list": {"foreground": "#a40000", "bold": True},
     "hr": {"foreground": "#888888"},
     "code_inline": {"foreground": "#ce5c00", "background": "#f0f0f0"},
-    "code_block": {"foreground": "#4e9a06", "background": "#f5f5f5"},
+    # No background: fenced blocks get a box drawn behind the whole block by
+    # the text view (see fence_blocks), not a highlight behind each character.
+    "code_block": {"foreground": "#4e9a06"},
     "bold": {"bold": True},
     "italic": {"italic": True},
     "link": {"foreground": "#3465a4", "underline": True},
@@ -88,13 +90,14 @@ def iter_spans(text):
     directly unit-testable.
 
     Fenced code blocks (```-delimited) are tagged whole-line with "code_block";
-    the fence lines themselves are included.
+    the fence lines themselves are included. The box drawn around each block
+    comes from fence_blocks(), not from these spans.
     """
     offset = 0
     in_fence = False
     for line in text.split("\n"):
         line_len = len(line)
-        fence = line.lstrip().startswith("```")
+        fence = is_fence_line(line)
         if fence:
             in_fence = not in_fence
             yield ("code_block", offset, offset + line_len)
@@ -114,3 +117,31 @@ def iter_spans(text):
                 for m in rgx.finditer(line):
                     yield (tag_name, offset + m.start(), offset + m.end())
         offset += line_len + 1  # +1 for the '\n' split removed
+
+
+def is_fence_line(line):
+    """True if `line` opens or closes a fenced code block (```)."""
+    return line.lstrip().startswith("```")
+
+
+def fence_blocks(text):
+    """
+    Return the fenced code blocks in `text` as a list of (first_line,
+    last_line) pairs: 0-based, inclusive line indices running from the opening
+    fence line to the closing one. An unterminated block runs to the last line.
+    The text views draw one box around each pair. Pure: no GTK.
+    """
+    blocks = []
+    start = None
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if not is_fence_line(line):
+            continue
+        if start is None:
+            start = i
+        else:
+            blocks.append((start, i))
+            start = None
+    if start is not None:
+        blocks.append((start, len(lines) - 1))
+    return blocks

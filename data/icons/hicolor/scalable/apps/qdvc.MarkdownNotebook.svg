@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+<defs>
+<linearGradient id="edge" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c0bfbc"/><stop offset="1" stop-color="#9a9996"/></linearGradient>
+<linearGradient id="page" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#f6f5f4"/></linearGradient>
+<linearGradient id="spine" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#813d9c"/><stop offset="1" stop-color="#9141ac"/></linearGradient>
+<linearGradient id="badge" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a65fc4"/><stop offset="1" stop-color="#813d9c"/></linearGradient>
+<clipPath id="spine-clip"><rect width="36" height="128"/></clipPath>
+</defs>
+<rect x="20" y="18" width="92" height="100" rx="10" fill="url(#edge)"/>
+<rect x="20" y="18" width="92" height="100" rx="10" fill="#613583" clip-path="url(#spine-clip)"/>
+<rect x="20" y="12" width="92" height="100" rx="10" fill="url(#page)"/>
+<path d="M30 12 h6 v100 h-6 a10 10 0 0 1 -10 -10 v-80 a10 10 0 0 1 10 -10 z" fill="url(#spine)"/>
+<rect x="30" y="25" width="12" height="6" rx="3" fill="#5e5c64"/>
+<rect x="31" y="25.5" width="10" height="2.5" rx="1.25" fill="#ffffff" fill-opacity="0.35"/>
+<rect x="30" y="42" width="12" height="6" rx="3" fill="#5e5c64"/>
+<rect x="31" y="42.5" width="10" height="2.5" rx="1.25" fill="#ffffff" fill-opacity="0.35"/>
+<rect x="30" y="59" width="12" height="6" rx="3" fill="#5e5c64"/>
+<rect x="31" y="59.5" width="10" height="2.5" rx="1.25" fill="#ffffff" fill-opacity="0.35"/>
+<rect x="30" y="76" width="12" height="6" rx="3" fill="#5e5c64"/>
+<rect x="31" y="76.5" width="10" height="2.5" rx="1.25" fill="#ffffff" fill-opacity="0.35"/>
+<rect x="30" y="93" width="12" height="6" rx="3" fill="#5e5c64"/>
+<rect x="31" y="93.5" width="10" height="2.5" rx="1.25" fill="#ffffff" fill-opacity="0.35"/>
+<path d="M49 24 l-2 14 M55 24 l-2 14 M45.5 28.5 h12 M44.5 33.5 h12" fill="none" stroke="#9141ac" stroke-width="2.6" stroke-linecap="round"/>
+<rect x="63" y="28" width="34" height="6" rx="3" fill="#5e5c64"/>
+<rect x="46" y="46" width="56" height="4" rx="2" fill="#c0bfbc"/>
+<rect x="46" y="55" width="48" height="4" rx="2" fill="#c0bfbc"/>
+<rect x="46" y="64" width="52" height="4" rx="2" fill="#c0bfbc"/>
+<rect x="43.5" y="74.5" width="61" height="29" rx="5" fill="#f2f1f0" stroke="#deddda" stroke-width="1.5"/>
+<rect x="50" y="80" width="22" height="4" rx="2" fill="#2ec27e"/>
+<rect x="58" y="87" width="28" height="4" rx="2" fill="#3584e4"/>
+<rect x="58" y="94" width="14" height="4" rx="2" fill="#2ec27e"/>
+<circle cx="94" cy="95" r="21" fill="#613583"/>
+<circle cx="94" cy="92" r="21" fill="url(#badge)"/>
+<circle cx="94" cy="92" r="20" fill="none" stroke="#dc8add" stroke-opacity="0.35" stroke-width="1"/>
+<path d="M81 99 v-14 l6 7 l6 -7 v14" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M102 85 v9" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round"/>
+<path d="M96.5 93 h11 l-5.5 7 z" fill="#ffffff" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round"/>
+</svg>

@@ -23,6 +23,7 @@ naming, or formatting logic. Only the view mechanics differ.
 | Panes / binding | `gtk3_panes.PanesMixin` | `_build_*` in `gtk4_window` |
 | Handlers/dialogs | `gtk3_actions.ActionsMixin` | `on_*` in `gtk4_window` (+ `gtk4_actions`) |
 | Editor tab | `gtk3_editortab.EditorTab` | `gtk4_editorview.EditorView` |
+| Editor / preview text view | `gtk3_textview.ContentTextView` | `gtk4_textview.ContentTextView` |
 | Highlighter | `gtk3_highlighter.MarkdownHighlighter` | `gtk4_highlighter.MarkdownHighlighter` |
 | Preferences | `gtk3_preferences.PreferencesDialog` | `gtk4_preferences.PreferencesWindow` |
 | Shortcuts | `gtk3_shortcuts` (accel wiring) | `gtk4_shortcuts` (shortcuts window) |
@@ -30,6 +31,11 @@ naming, or formatting logic. Only the view mechanics differ.
 Both highlighters share the pure `highlight_rules` module (regexes, tag specs,
 `iter_spans`); each only translates spans into its toolkit's `Gtk.TextBuffer`
 tags — which happen to use the same API in GTK 3 and GTK 4.
+
+Both `ContentTextView`s share `ui_prefs`' content-layout constants and helpers
+(`content_margin`, `code_box_rect`, the `CODE_BOX_*` sizes and alphas), so the
+maximum-width column and the fenced-code boxes look the same in both front-ends;
+only the mechanics differ (next table).
 
 ## 2. Element-by-element substitutions
 
@@ -44,15 +50,19 @@ tags — which happen to use the same API in GTK 3 and GTK 4.
 | Note list | `Gtk.TreeView` + `Gtk.ListStore` + cell-data-func | `Gtk.ListView` + `Gio.ListStore` of `NoteItem` + `Gtk.SignalListItemFactory`, inside a `Gtk.FilterListModel` + `Gtk.CustomFilter`. Row labels ellipsize and the scroller has `propagate_natural_width=False` so a wide card can't force the pane wider; each pane child has a `width_request` minimum so none can be collapsed to invisibility |
 | Note context menu | `Gtk.Menu` popup from a pane-2 right-click / tab right-click | `Gtk.PopoverMenu` from a `Gio.Menu` model, raised by a `Gtk.GestureClick` (button 3) on each row; items target parameterized `win.note-*` actions carrying the note path (move carries `src\ndest`). Includes Slugify (the only route to slugify in GTK 4) |
 | Recent workspaces | File-menu submenu refilled from `settings.recent_folders` | a dedicated **header menu-button** with its own popover `Gio.Menu` (refilled by `_rebuild_recent_menu`); kept out of the primary menu so long paths never widen it. Entries target `win.open-recent` with the folder path |
+| Max content width | margins recomputed on `size-allocate`, applied from a `GLib.idle_add` | margins set straight from a `do_size_allocate` override (GTK 4 allows it) |
+| Fenced-code boxes | `do_draw_layer(BELOW_TEXT, cr)` with cairo (needs `python3-gi-cairo`; without it a `paragraph-background` band) | `do_snapshot_layer(BELOW_TEXT, snapshot)` with `Gsk.RoundedRect` + `append_color` / `append_border` (no cairo bindings) |
+| App icon | `resolve_icon_name()` in `gtk3_app`: `Gtk.IconTheme.get_default().append_search_path(data/icons)`, own icon else stock | `resolve_icon_name()` in `gtk4_app`: `Gtk.IconTheme.get_for_display(...).add_search_path(data/icons)`, own icon else stock |
+| `app.quit` (D-Bus, used by `build-app.sh`) | `Gio.SimpleAction` → `window.on_quit(None)` | `Gio.SimpleAction` → `window.on_quit(None, None)` |
 | Custom app icon | `set_icon_list` from pixbufs + hicolor install + `.desktop` rewrite | hicolor install + icon-theme search-path + `.desktop` rewrite + `set_default_icon_name`/`set_icon_name(APP_ICON_NAME)` (GTK 4 keeps both) so the MATE panel / Alt+Tab resolve it |
 | Window title | `Gtk.MessageDialog` + entry (OK/Reset/Cancel), `_custom_title` | async `Adw.MessageDialog` + `Gtk.Entry` extra-child, `win.set-window-title` action; same `_custom_title` session-only field and `_update_window_title` precedence |
-| About icon | `set_logo`/`set_logo_icon_name` resolving custom → themed → stock | `Adw.AboutWindow.set_application_icon` with `APP_ICON_NAME` when a custom set is installed, else the stock themed name |
+| About icon | `set_logo`/`set_logo_icon_name` resolving custom → themed → stock | `Adw.AboutWindow.set_application_icon` with `APP_ICON_NAME` when a custom set is installed, else the resolved app icon (own, else stock) |
 | Sidebar | `Gtk.TreeView` tree (`Gtk.TreeStore`) | `Gtk.ListView` + `Gio.ListStore` of `SidebarRow` + `Gtk.SingleSelection` |
 | Outline | `Gtk.TreeView` (`Gtk.TreeStore`) | `Gtk.ListView` + `Gio.ListStore` of `OutlineItem` (indent encoded in label) |
 | Fonts | `TextView.override_font(Pango.FontDescription)` | CSS via a `Gtk.CssProvider` (`override_font` removed in GTK 4); `.qdvc-editor` / `.qdvc-preview` classes |
 | Tab→spaces | `connect("key-press-event")` | `Gtk.EventControllerKey` `key-pressed` |
 | Modal dialogs | `dialog.run()` (blocking) | async: `Gtk.FileDialog` / `Adw.MessageDialog` + response callbacks (no `run()`) |
-| Preferences | tabbed `Gtk.Dialog`, Save/Cancel snapshot-revert | `Adw.PreferencesWindow`, **live-apply**, no toolbar-style row, backend `Adw.ComboRow` |
+| Preferences | tabbed `Gtk.Dialog`, Save/Cancel snapshot-revert; content width as check button + spin button + *Reset to default* on the Interface tab | `Adw.PreferencesWindow`, **live-apply**, no toolbar-style row, backend `Adw.ComboRow`; content width in a *Layout* group (`Adw.SwitchRow` + `Adw.SpinRow`, *Reset to default* as the group's header suffix) |
 | About | `Gtk.AboutDialog` | `Adw.AboutWindow` (falls back to `Gtk.AboutDialog`) |
 | Shortcuts help | (none in GTK 3) | `Gtk.ShortcutsWindow` from `ui_prefs.grouped_shortcuts` (`win.show-help-overlay`) |
 | Quit | close window → `Gtk.Application` exits (standalone: `Gtk.main_quit`) | `app.quit()` after async confirm |

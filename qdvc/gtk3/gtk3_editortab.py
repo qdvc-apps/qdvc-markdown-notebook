@@ -21,6 +21,7 @@ from gi.repository import Gtk, Pango, GLib  # noqa: E402
 from .. import model
 from .. import pango_markdown
 from .gtk3_highlighter import MarkdownHighlighter
+from .gtk3_textview import ContentTextView
 from ..strings import Editor as S
 
 # Backwards-compatible alias: this used to be a module constant. It now points
@@ -86,13 +87,11 @@ class EditorTab:
                                  Gtk.PolicyType.AUTOMATIC)
 
         self.text_buffer = Gtk.TextBuffer()
-        self.text_view = Gtk.TextView(buffer=self.text_buffer)
+        # A ContentTextView (gtk3_textview) is a TextView that can centre a
+        # maximum-width text column and draws a box around fenced code.
+        self.text_view = ContentTextView(self.text_buffer)
         self.text_view.set_monospace(True)
         self.text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        self.text_view.set_left_margin(8)
-        self.text_view.set_right_margin(8)
-        self.text_view.set_top_margin(8)
-        self.text_view.set_bottom_margin(8)
 
         self.highlighter = MarkdownHighlighter(self.text_buffer,
                                                code_font=code_font)
@@ -112,14 +111,10 @@ class EditorTab:
         preview_scroll.set_policy(Gtk.PolicyType.AUTOMATIC,
                                   Gtk.PolicyType.AUTOMATIC)
         self.preview_buffer = Gtk.TextBuffer()
-        self.preview_view = Gtk.TextView(buffer=self.preview_buffer)
+        self.preview_view = ContentTextView(self.preview_buffer)
         self.preview_view.set_editable(False)
         self.preview_view.set_cursor_visible(False)
         self.preview_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        self.preview_view.set_left_margin(8)
-        self.preview_view.set_right_margin(8)
-        self.preview_view.set_top_margin(8)
-        self.preview_view.set_bottom_margin(8)
         preview_scroll.add(self.preview_view)
         self.widget.add_named(preview_scroll, "preview")
 
@@ -229,16 +224,30 @@ class EditorTab:
         self._refresh_status_icons()
 
     def _render_preview(self):
-        """Render the current editor content to the read-only preview buffer."""
-        markup = pango_markdown.render(self.get_content(),
-                                       code_font=self._code_font)
-        self.preview_buffer.set_text("")
-        start = self.preview_buffer.get_start_iter()
+        """
+        Render the current editor content to the read-only preview buffer.
+        The markup comes in segments (ordinary text / one fenced code block)
+        and is inserted one segment at a time, so we know which lines each code
+        block landed on and the preview view can draw a box around it.
+        """
+        segments = pango_markdown.render_blocks(self.get_content(),
+                                                code_font=self._code_font)
+        buf = self.preview_buffer
+        buf.set_text("")
+        blocks = []
         try:
-            self.preview_buffer.insert_markup(start, markup, -1)
+            for i, (kind, markup) in enumerate(segments):
+                if i:
+                    buf.insert(buf.get_end_iter(), "\n")
+                first = buf.get_end_iter().get_line()
+                buf.insert_markup(buf.get_end_iter(), markup, -1)
+                if kind == pango_markdown.BLOCK_CODE:
+                    blocks.append((first, buf.get_end_iter().get_line()))
         except (TypeError, GLib.GError):  # pragma: no cover
             # Extremely defensive: if markup somehow fails, fall back to plain.
-            self.preview_buffer.set_text(self.get_content())
+            buf.set_text(self.get_content())
+            blocks = []
+        self.preview_view.set_code_blocks(blocks)
 
     # --------------------------------------------------------------- API -- #
     def _on_textview_key_press(self, _view, event):
@@ -283,16 +292,20 @@ class EditorTab:
         self.preview_view.override_font(Pango.FontDescription(font_desc_str))
 
     def apply_editor_line_spacing(self, pixels):
-        # Extra vertical space in the editor: set_pixels_below_lines adds space
-        # after each paragraph; set_pixels_inside_wrap adds it between the
-        # wrapped rows of one long line.
-        self.text_view.set_pixels_below_lines(int(pixels))
-        self.text_view.set_pixels_inside_wrap(int(pixels))
+        # Extra vertical space in the editor: pixels below each paragraph and
+        # between the wrapped rows of one long line (ContentTextView sets both,
+        # and keeps the code-block padding consistent with them).
+        self.text_view.set_line_spacing(int(pixels))
 
     def apply_preview_line_spacing(self, pixels):
         # Same two spacing knobs, applied to the preview view.
-        self.preview_view.set_pixels_below_lines(int(pixels))
-        self.preview_view.set_pixels_inside_wrap(int(pixels))
+        self.preview_view.set_line_spacing(int(pixels))
+
+    def apply_content_width(self, max_width):
+        """Limit the editor and preview text column to `max_width` pixels,
+        centred (None = fill the view, the original behaviour)."""
+        self.text_view.set_max_content_width(max_width)
+        self.preview_view.set_max_content_width(max_width)
 
     def set_editable(self, editable):
         """Toggle whether the user can modify this tab's text (read-only mode).
@@ -390,7 +403,7 @@ class EditorTab:
         self._loading = False
         self.note = note
         self.dirty = False
-        self.highlighter.highlight()
+        self._highlight()
         self._apply_search_highlight()
         if self.preview:
             self._render_preview()
@@ -429,10 +442,16 @@ class EditorTab:
         if self._loading:
             return
         self.dirty = True
-        self.highlighter.highlight()
+        self._highlight()
         self._apply_search_highlight()
         self._refresh_title()
         self._on_changed(self)
+
+    def _highlight(self):
+        # Re-tag the markdown, then hand the fenced-block line ranges the
+        # highlighter found to the text view, which boxes them.
+        self.highlighter.highlight()
+        self.text_view.set_code_blocks(self.highlighter.code_blocks)
 
     def _refresh_title(self):
         # Recompute the tab label: truncate the title past the configured limit

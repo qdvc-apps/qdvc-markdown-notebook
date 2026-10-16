@@ -21,6 +21,8 @@ GTK3 view / controller (nested sub-package ``qdvc.gtk3``; every module prefaced
     gtk3_app          NotebookApp: the Gtk.Application (id, icon, prgname).
     gtk3_highlighter  MarkdownHighlighter (GTK TextBuffer tagging).
     gtk3_editortab    EditorTab: one tab's editor widget + per-tab state.
+    gtk3_textview     ContentTextView: the editor/preview TextView (centred
+                      maximum-width column, boxes around fenced code).
     gtk3_preferences  PreferencesDialog: the *view/controller* for settings —
                       the window that lets the user edit what settings.py stores.
     gtk3_menubar      MenuBarMixin: the window's menu bar.

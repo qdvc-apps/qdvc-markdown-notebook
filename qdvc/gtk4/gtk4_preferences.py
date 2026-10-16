@@ -20,6 +20,8 @@ from gi.repository import Gtk, Adw, Gio  # noqa: E402
 from ..settings import (
     MIN_LINE_SPACING, MAX_LINE_SPACING,
     MIN_TAB_TITLE_LENGTH, MAX_TAB_TITLE_LENGTH,
+    MIN_MAX_CONTENT_WIDTH, MAX_MAX_CONTENT_WIDTH,
+    DEFAULT_LIMIT_CONTENT_WIDTH, DEFAULT_MAX_CONTENT_WIDTH,
     UI_BACKEND_GTK3, UI_BACKEND_GTK4,
 )
 from ..strings import Prefs as P
@@ -63,6 +65,29 @@ class PreferencesWindow(Adw.PreferencesWindow):
             P.PREVIEW_LINE_SPACING, settings.preview_line_spacing,
             MIN_LINE_SPACING, MAX_LINE_SPACING, self._on_preview_spacing)
         spacing.add(self._preview_spacing_row)
+
+        # ---- Layout: the editor/preview text-column width limit ----
+        layout = Adw.PreferencesGroup(title=P.GROUP_LAYOUT)
+        page.add(layout)
+        self._limit_width_row = self._switch_row(
+            P.LIMIT_CONTENT_WIDTH, settings.limit_content_width,
+            self._on_limit_width)
+        self._limit_width_row.set_subtitle(P.LIMIT_CONTENT_WIDTH_SUBTITLE)
+        layout.add(self._limit_width_row)
+        self._max_width_row = Adw.SpinRow.new_with_range(
+            MIN_MAX_CONTENT_WIDTH, MAX_MAX_CONTENT_WIDTH, 10)
+        self._max_width_row.set_title(P.MAX_CONTENT_WIDTH)
+        self._max_width_row.set_value(settings.max_content_width)
+        self._max_width_row.connect("notify::value", self._on_max_width)
+        layout.add(self._max_width_row)
+        self._reset_width_btn = Gtk.Button(label=P.CONTENT_WIDTH_RESET)
+        self._reset_width_btn.add_css_class("flat")
+        self._reset_width_btn.set_valign(Gtk.Align.CENTER)
+        self._reset_width_btn.set_tooltip_text(
+            P.content_width_reset_tip(DEFAULT_MAX_CONTENT_WIDTH))
+        self._reset_width_btn.connect("clicked", self._on_reset_width)
+        layout.set_header_suffix(self._reset_width_btn)
+        self._sync_width_rows()
 
         # ---- Interface ----
         interface = Adw.PreferencesGroup(title=P.GROUP_INTERFACE)
@@ -142,6 +167,32 @@ class PreferencesWindow(Adw.PreferencesWindow):
     def _on_preview_spacing(self, row, _param):
         self.settings.set_preview_line_spacing(int(row.get_value()))
         self._apply()
+
+    def _on_limit_width(self, row, _param):
+        self.settings.set_limit_content_width(row.get_active())
+        self._sync_width_rows()
+        self._apply()
+
+    def _on_max_width(self, row, _param):
+        self.settings.set_max_content_width(int(row.get_value()))
+        self._sync_width_rows()
+        self._apply()
+
+    def _on_reset_width(self, _btn):
+        # Setting the rows fires their notify handlers, which store and apply
+        # the values; reset the model too in case a row was already there.
+        self.settings.reset_content_width()
+        self._limit_width_row.set_active(self.settings.limit_content_width)
+        self._max_width_row.set_value(self.settings.max_content_width)
+        self._sync_width_rows()
+        self._apply()
+
+    def _sync_width_rows(self):
+        """The width only matters with the limit on; Reset only when changed."""
+        self._max_width_row.set_sensitive(self.settings.limit_content_width)
+        self._reset_width_btn.set_sensitive(
+            self.settings.limit_content_width != DEFAULT_LIMIT_CONTENT_WIDTH
+            or self.settings.max_content_width != DEFAULT_MAX_CONTENT_WIDTH)
 
     def _on_tab_len(self, row, _param):
         self.settings.set_tab_title_length(int(row.get_value()))

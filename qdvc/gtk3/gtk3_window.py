@@ -46,6 +46,7 @@ from ..settings import (
     install_icon_set,
     uninstall_icon_set,
     update_desktop_icon,
+    default_icon_name,
     APP_ICON_NAME,
 )
 from .gtk3_editortab import EditorTab
@@ -64,9 +65,9 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         self.set_default_size(1000, 640)
         # Center on screen at startup (#1) rather than the WM's default corner.
         self.set_position(Gtk.WindowPosition.CENTER)
-        # Window/panel icon (#5). Use the same stock icon named in the .desktop
-        # file so the panel/taskbar shows it instead of the generic window icon.
-        self.set_icon_name("accessories-text-editor")
+        # Window/panel icon (#5). Use the same icon named in the .desktop file
+        # so the panel/taskbar shows it instead of the generic window icon.
+        self.set_icon_name(self._default_icon_name())
 
         self.settings = Settings.load()
         # Apply a custom icon set (if configured) before anything else shows, so
@@ -103,6 +104,7 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         self._apply_code_font()
         self._apply_preview_font()
         self._apply_line_spacing()
+        self._apply_content_width()
         self._apply_read_only()
         self._rebuild_recent_menu()
 
@@ -187,15 +189,17 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
              without a logout.
 
         When no/invalid set is configured, the installed theme icons and the
-        desktop Icon= line are reverted to the stock "accessories-text-editor".
-        Every step is best-effort and falls back silently to the stock icon.
+        desktop Icon= line are reverted to the default icon: the app's own
+        (config.BUNDLED_ICON_NAME) when available, else the stock
+        "accessories-text-editor". Every step is best-effort and falls back
+        silently.
         """
         files = icon_set_files(self.settings.icon_set_dir)
         if not files:
-            # No custom set: revert to the stock icon everywhere.
-            self.set_icon_name("accessories-text-editor")
+            # No custom set: revert to the default icon everywhere.
+            self.set_icon_name(self._default_icon_name())
             uninstall_icon_set(APP_ICON_NAME)
-            update_desktop_icon("accessories-text-editor",
+            update_desktop_icon(default_icon_name(),
                                 exec_path=self._script_path())
             self._refresh_icon_theme()
             return
@@ -231,6 +235,13 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         # If the pixbufs failed but the theme install succeeded, fall back to
         # the themed name; otherwise the stock icon.
         self.set_icon_name(APP_ICON_NAME)
+
+    @staticmethod
+    def _default_icon_name():
+        """The app's themed icon as resolved at startup (gtk3_app); imported
+        lazily because gtk3_app imports this module."""
+        from .gtk3_app import resolve_icon_name
+        return resolve_icon_name()
 
     @staticmethod
     def _refresh_icon_theme():
@@ -303,6 +314,11 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         for tab in self._tabs:
             tab.apply_editor_line_spacing(self.settings.editor_line_spacing)
             tab.apply_preview_line_spacing(self.settings.preview_line_spacing)
+
+    def _apply_content_width(self):
+        """Apply the editor/preview text-column width limit to every tab."""
+        for tab in self._tabs:
+            tab.apply_content_width(self.settings.content_max_width())
 
     def _apply_tab_title_length(self):
         """Apply the configured tab-title length to every open tab."""
@@ -506,6 +522,7 @@ class NotebookWindow(MenuBarMixin, ToolbarMixin, PanesMixin, ActionsMixin,
         tab.apply_preview_font(self.settings.preview_font)
         tab.apply_editor_line_spacing(self.settings.editor_line_spacing)
         tab.apply_preview_line_spacing(self.settings.preview_line_spacing)
+        tab.apply_content_width(self.settings.content_max_width())
         # Per-tab view state starts at the app defaults (read-only on, preview
         # off), independent of whatever the other tabs are showing.
         tab.set_read_only(True)

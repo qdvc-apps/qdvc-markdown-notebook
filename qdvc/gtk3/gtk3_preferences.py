@@ -8,8 +8,9 @@ is "Preferences" (under the Edit menu). It is a tabbed dialog:
   * Fonts     — editor font, code font, markdown-preview font, and the editor /
                 preview line spacing.
   * Interface — toolbar button text placement (beside vs below the icon), the
-                tab-title length, a custom application icon set, and the
-                session/sort persistence options.
+                tab-title length, the maximum width of the editor/preview text
+                column, a custom application icon set, and the session/sort
+                persistence options.
 
 Behaviour: changes preview live in the app while the dialog is open. The dialog
 has Save and Cancel buttons — Save persists the settings to disk; Cancel (or
@@ -31,6 +32,9 @@ from ..settings import (
     MAX_LINE_SPACING,
     MIN_TAB_TITLE_LENGTH,
     MAX_TAB_TITLE_LENGTH,
+    MIN_MAX_CONTENT_WIDTH,
+    MAX_MAX_CONTENT_WIDTH,
+    DEFAULT_MAX_CONTENT_WIDTH,
     UI_BACKEND_GTK3,
     UI_BACKEND_GTK4,
 )
@@ -59,6 +63,8 @@ class PreferencesDialog(Gtk.Dialog):
             "preview_line_spacing": settings.preview_line_spacing,
             "toolbar_style": settings.toolbar_style,
             "tab_title_length": settings.tab_title_length,
+            "limit_content_width": settings.limit_content_width,
+            "max_content_width": settings.max_content_width,
             "remember_sort": settings.remember_sort,
             "restore_session": settings.restore_session,
             "icon_set_dir": settings.icon_set_dir,
@@ -220,6 +226,37 @@ class PreferencesDialog(Gtk.Dialog):
 
         box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
 
+        # --- maximum content width ---
+        # A check button switches the limit on/off; the spin button below sets
+        # the width (only meaningful while the limit is on, so it greys out
+        # otherwise); "Reset to default" restores both. The _syncing flag stops
+        # the reset's own widget updates from re-entering the handlers.
+        self._syncing_width = False
+        width_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.chk_limit_width = Gtk.CheckButton(label=P.LIMIT_CONTENT_WIDTH)
+        self.chk_limit_width.set_active(self.settings.limit_content_width)
+        self.chk_limit_width.connect("toggled", self._on_limit_width_toggled)
+        width_box.add(self.chk_limit_width)
+        width_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        width_row.add(self._label(P.MAX_CONTENT_WIDTH))
+        self.max_width_spin = Gtk.SpinButton.new_with_range(
+            MIN_MAX_CONTENT_WIDTH, MAX_MAX_CONTENT_WIDTH, 10)
+        self.max_width_spin.set_value(self.settings.max_content_width)
+        self.max_width_spin.set_halign(Gtk.Align.START)
+        self.max_width_spin.connect("value-changed",
+                                    self._on_max_width_changed)
+        width_row.add(self.max_width_spin)
+        reset_btn = Gtk.Button(label=P.CONTENT_WIDTH_RESET)
+        reset_btn.set_tooltip_text(
+            P.content_width_reset_tip(DEFAULT_MAX_CONTENT_WIDTH))
+        reset_btn.connect("clicked", self._on_reset_width)
+        width_row.add(reset_btn)
+        width_box.add(width_row)
+        box.add(width_box)
+        self._sync_width_widgets()
+
+        box.add(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+
         # --- session / sort persistence ---
         # Gtk.CheckButton is a labelled tick box; set_active sets its state and
         # "toggled" fires on change.
@@ -306,6 +343,35 @@ class PreferencesDialog(Gtk.Dialog):
         self.settings.set_tab_title_length(spin.get_value_as_int())
         self._on_apply()
 
+    def _on_limit_width_toggled(self, btn):
+        # Limit on/off → store, grey the width spin as needed, live-apply.
+        if self._syncing_width:
+            return
+        self.settings.set_limit_content_width(btn.get_active())
+        self._sync_width_widgets()
+        self._on_apply()
+
+    def _on_max_width_changed(self, spin):
+        # Width spin → store the new maximum (pixels) and live-apply.
+        if self._syncing_width:
+            return
+        self.settings.set_max_content_width(spin.get_value_as_int())
+        self._on_apply()
+
+    def _on_reset_width(self, _btn):
+        # Reset → the defaults (limit on, DEFAULT_MAX_CONTENT_WIDTH pixels).
+        self.settings.reset_content_width()
+        self._sync_width_widgets()
+        self._on_apply()
+
+    def _sync_width_widgets(self):
+        # Show the stored values without firing the change handlers.
+        self._syncing_width = True
+        self.chk_limit_width.set_active(self.settings.limit_content_width)
+        self.max_width_spin.set_value(self.settings.max_content_width)
+        self.max_width_spin.set_sensitive(self.settings.limit_content_width)
+        self._syncing_width = False
+
     def _on_remember_sort_toggled(self, btn):
         # CheckButton change → store the boolean and live-apply.
         self.settings.set_remember_sort(btn.get_active())
@@ -364,6 +430,8 @@ class PreferencesDialog(Gtk.Dialog):
             self.settings.set_preview_line_spacing(o["preview_line_spacing"])
             self.settings.set_toolbar_style(o["toolbar_style"])
             self.settings.set_tab_title_length(o["tab_title_length"])
+            self.settings.set_limit_content_width(o["limit_content_width"])
+            self.settings.set_max_content_width(o["max_content_width"])
             self.settings.set_remember_sort(o["remember_sort"])
             self.settings.set_restore_session(o["restore_session"])
             self.settings.set_icon_set_dir(o["icon_set_dir"])

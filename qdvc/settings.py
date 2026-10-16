@@ -20,6 +20,8 @@ Schema (version 1):
     tab_title_length: 12               # chars before a tab title is ellipsised
     remember_sort: false               # persist the note sort order between runs
     restore_session: false             # reopen last workspace + notes on startup
+    limit_content_width: true          # centre the editor/preview text column
+    max_content_width: 1000            # ...at most this many pixels wide
     icon_set_dir: ""                   # folder of custom app icons (see README)
     sort_mode: alpha                   # persisted sort order (when remember_sort)
     last_workspace: /home/user/notes   # restored on startup (when restore_session)
@@ -37,6 +39,8 @@ This module has no GTK dependency and is unit-testable without a display.
 
 import os
 import sys
+
+from .config import APP_ID, BUNDLED_ICON_NAME, STOCK_ICON_NAME
 
 try:
     import yaml
@@ -78,6 +82,14 @@ DEFAULT_RESTORE_SESSION = False
 # remembered and restored on launch. Default off.
 DEFAULT_CARD_VIEW = False
 
+# Maximum width (pixels) of the text column in the editor and the preview. When
+# limit_content_width is on, a wider view centres the column with equal side
+# margins (like a GNOME document view); off, the text fills the view as before.
+DEFAULT_LIMIT_CONTENT_WIDTH = True
+DEFAULT_MAX_CONTENT_WIDTH = 1000
+MIN_MAX_CONTENT_WIDTH = 300
+MAX_MAX_CONTENT_WIDTH = 4000
+
 # UI backend selection (spec §3). The dispatcher picks the front-end from a CLI
 # flag, then this stored value, then the default. Anything unrecognised falls
 # back to gtk3 via the validated `ui_backend` accessor.
@@ -87,7 +99,7 @@ DEFAULT_UI_BACKEND = UI_BACKEND_GTK3
 
 # Custom icon set: an absolute path to a folder containing 16x16.png, 22x22.png,
 # 24x24.png, 32x32.png, 48x48.png, 256x256.png, and scalable.svg. Empty means
-# "use the stock accessories-text-editor icon".
+# "use the default icon" (see default_icon_name()).
 DEFAULT_ICON_SET_DIR = ""
 
 # Filenames expected inside a custom icon-set folder. Sizes map a pixel
@@ -95,11 +107,18 @@ DEFAULT_ICON_SET_DIR = ""
 ICON_SET_PNG_SIZES = (16, 22, 24, 32, 48, 256)
 ICON_SET_SVG_NAME = "scalable.svg"
 
-# The themed icon name the app installs a custom icon set under, and the matching
-# .desktop file id. Other launchers resolve "Icon=qdvc-markdown-notebook" against
+# The themed icon name the app installs a *custom* icon set under (kept apart
+# from the bundled BUNDLED_ICON_NAME so clearing the custom set never removes the
+# app's own icon). Other launchers resolve "Icon=qdvc-markdown-notebook" against
 # the user's hicolor theme once the icons are installed.
 APP_ICON_NAME = "qdvc-markdown-notebook"
-DESKTOP_FILE_ID = "qdvc-markdown-notebook.desktop"
+
+# The per-user launcher. It is named after the application id, as
+# scripts/build-app.sh installs it, so GNOME Shell on Wayland matches the window
+# to it. Older builds (and older README instructions) used the program name;
+# such a file is renamed to the new id the first time the app maintains it.
+DESKTOP_FILE_ID = f"{APP_ID}.desktop"
+LEGACY_DESKTOP_FILE_ID = "qdvc-markdown-notebook.desktop"
 
 SCHEMA_VERSION = 1
 MAX_RECENT = 10
@@ -192,6 +211,47 @@ def _data_home():
     return base
 
 
+def _data_dirs():
+    """Return the XDG data directories: $XDG_DATA_HOME, then $XDG_DATA_DIRS."""
+    dirs = [_data_home()]
+    system = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
+    dirs.extend(d for d in system.split(":") if d)
+    return dirs
+
+
+def bundled_icons_dir():
+    """
+    The app's bundled icon-theme root (data/icons next to the qdvc package, laid
+    out like hicolor), or None if it is missing. The front-ends add it to the
+    icon theme's search path so the app's own icon resolves even when running
+    straight from a checkout.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(os.path.dirname(here), "data", "icons")
+    return path if os.path.isdir(path) else None
+
+
+def installed_app_icon_available():
+    """True if the app's own icon is installed in a hicolor theme on the XDG
+    data path (scripts/build-app.sh puts it under ~/.local/share/icons)."""
+    for base in _data_dirs():
+        if os.path.isfile(os.path.join(base, "icons", "hicolor", "scalable",
+                                       "apps", f"{BUNDLED_ICON_NAME}.svg")):
+            return True
+    return False
+
+
+def default_icon_name():
+    """
+    The icon name for the .desktop Icon= line when no custom icon set is
+    configured: the app's own icon once it is installed, else the stock themed
+    icon (other launchers cannot see the checkout's data/icons folder).
+    """
+    if installed_app_icon_available():
+        return BUNDLED_ICON_NAME
+    return STOCK_ICON_NAME
+
+
 def install_icon_set(folder, icon_name=APP_ICON_NAME):
     """
     Copy a custom icon-set folder's files into the user's hicolor icon theme so
@@ -247,6 +307,27 @@ def desktop_file_path():
     return os.path.join(_data_home(), "applications", DESKTOP_FILE_ID)
 
 
+def legacy_desktop_file_path():
+    """Path of the launcher name used by older builds (see DESKTOP_FILE_ID)."""
+    return os.path.join(_data_home(), "applications", LEGACY_DESKTOP_FILE_ID)
+
+
+def _migrate_legacy_desktop_file():
+    """
+    If only the old-named launcher exists, rename it to the application-id name
+    so its Exec line (perhaps hand-written) is kept and no duplicate menu entry
+    appears. Best-effort; never raises.
+    """
+    new_path = desktop_file_path()
+    old_path = legacy_desktop_file_path()
+    if os.path.exists(new_path) or not os.path.isfile(old_path):
+        return
+    try:
+        os.replace(old_path, new_path)
+    except OSError:
+        pass
+
+
 def update_desktop_icon(icon_name, exec_path=None):
     """
     Create or update the per-user .desktop file so its `Icon=` line points at
@@ -255,6 +336,7 @@ def update_desktop_icon(icon_name, exec_path=None):
     preserved). `exec_path` (absolute path to the script) is used only when
     creating the file. Returns True on success. Never raises.
     """
+    _migrate_legacy_desktop_file()
     path = desktop_file_path()
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -271,8 +353,9 @@ def update_desktop_icon(icon_name, exec_path=None):
                     out.append(line)
             if not replaced:
                 out.append(f"Icon={icon_name}\n")
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.writelines(out)
+            if out != lines:  # don't touch (and re-trigger menu rescans) needlessly
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.writelines(out)
         else:
             exec_line = (f"python3 {exec_path} %F" if exec_path
                          else "qdvc-markdown-notebook %F")
@@ -355,6 +438,10 @@ class Settings:
         self.restore_session = DEFAULT_RESTORE_SESSION
         # Remembered card-view state (always restored on launch).
         self.card_view = DEFAULT_CARD_VIEW
+        # Text-column width limit for the editor and preview (see
+        # content_max_width()).
+        self.limit_content_width = DEFAULT_LIMIT_CONTENT_WIDTH
+        self.max_content_width = DEFAULT_MAX_CONTENT_WIDTH
         # UI backend ("gtk3"/"gtk4"); read via the validated `ui_backend`
         # property so a hand-edited config can never yield an invalid value.
         self._ui_backend = DEFAULT_UI_BACKEND
@@ -433,6 +520,11 @@ class Settings:
             data.get("restore_session"), self.restore_session)
         self.card_view = _coerce_bool(
             data.get("card_view"), self.card_view)
+        self.limit_content_width = _coerce_bool(
+            data.get("limit_content_width"), self.limit_content_width)
+        self.max_content_width = _coerce_int_range(
+            data.get("max_content_width"), MIN_MAX_CONTENT_WIDTH,
+            MAX_MAX_CONTENT_WIDTH, self.max_content_width)
 
         # ui_backend is stored raw and validated on read (see the property).
         ui_backend = data.get("ui_backend")
@@ -474,7 +566,8 @@ class Settings:
         known = {"version", "editor_font", "code_font", "preview_font",
                  "editor_line_spacing", "preview_line_spacing",
                  "toolbar_style", "tab_title_length", "remember_sort",
-                 "restore_session", "card_view", "ui_backend", "icon_set_dir",
+                 "restore_session", "card_view", "limit_content_width",
+                 "max_content_width", "ui_backend", "icon_set_dir",
                  "sort_mode", "last_workspace", "last_open_notes", "last_node",
                  "last_subfolder", "last_selected_note", "recent_folders"}
         self._extra = {k: v for k, v in data.items() if k not in known}
@@ -493,6 +586,8 @@ class Settings:
             "remember_sort": self.remember_sort,
             "restore_session": self.restore_session,
             "card_view": self.card_view,
+            "limit_content_width": self.limit_content_width,
+            "max_content_width": self.max_content_width,
             "ui_backend": self.ui_backend,
             "icon_set_dir": self.icon_set_dir,
             "sort_mode": self.sort_mode,
@@ -562,6 +657,24 @@ class Settings:
 
     def set_card_view(self, value):
         self.card_view = _coerce_bool(value, self.card_view)
+
+    def set_limit_content_width(self, value):
+        self.limit_content_width = _coerce_bool(value,
+                                                self.limit_content_width)
+
+    def set_max_content_width(self, value):
+        self.max_content_width = _coerce_int_range(
+            value, MIN_MAX_CONTENT_WIDTH, MAX_MAX_CONTENT_WIDTH,
+            self.max_content_width)
+
+    def reset_content_width(self):
+        """Restore the content-width limit and its width to the defaults."""
+        self.limit_content_width = DEFAULT_LIMIT_CONTENT_WIDTH
+        self.max_content_width = DEFAULT_MAX_CONTENT_WIDTH
+
+    def content_max_width(self):
+        """The text-column width limit in pixels, or None when unlimited."""
+        return self.max_content_width if self.limit_content_width else None
 
     @property
     def ui_backend(self):

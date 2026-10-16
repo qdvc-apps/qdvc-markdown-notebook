@@ -163,3 +163,62 @@ def grouped_shortcuts(scope):
             order.append(s.group)
         buckets[s.group].append(s)
     return [(g, buckets[g]) for g in order]
+
+
+# --------------------------------------------------------------------------- #
+# Content layout: the editor / preview text column and fenced-code boxes.
+#
+# Both front-ends draw the same thing with their own toolkit (gtk3_textview /
+# gtk4_textview); the numbers and geometry live here so the two stay identical
+# and the arithmetic is unit-testable without a display.
+# --------------------------------------------------------------------------- #
+
+# Side margin (px) between the view edge and the text when the column is not
+# being narrowed by the maximum-content-width preference.
+CONTENT_BASE_MARGIN = 8
+
+# Fenced-code boxes. The box spans the text column; the code inside is inset
+# horizontally by CODE_BOX_INSET. Vertically, the first and last lines of a
+# block get CODE_BOX_GAP + CODE_BOX_PAD extra pixels: GAP stays outside the
+# box (space from the neighbouring paragraph), PAD inside it.
+CODE_BOX_INSET = 12
+CODE_BOX_GAP = 4
+CODE_BOX_PAD = 6
+CODE_BOX_RADIUS = 6
+# The box is tinted from the view's own text colour, so it suits light and dark
+# styles alike: a faint fill and a slightly stronger 1 px border.
+CODE_BOX_FILL_ALPHA = 0.05
+CODE_BOX_BORDER_ALPHA = 0.18
+# Used instead of a drawn box where the toolkit cannot draw one (GTK 3 without
+# PyGObject's cairo support): a plain full-width band behind the block.
+CODE_BOX_FALLBACK_BACKGROUND = "#f2f2f2"
+
+
+def content_margin(view_width, max_width, base=CONTENT_BASE_MARGIN):
+    """
+    Side margin (px, applied on both sides) that centres the text column in a
+    view `view_width` pixels wide so the column is at most `max_width` pixels.
+    `max_width` of None (or <= 0) means no limit, which gives `base`. The margin
+    never drops below `base`.
+    """
+    if not max_width or max_width <= 0 or view_width <= 0:
+        return base
+    return max(base, (int(view_width) - int(max_width)) // 2)
+
+
+def code_box_rect(view_width, margin, top_y, bottom_y, bottom_h, below_lines=0):
+    """
+    Geometry of one fenced-code box, in buffer coordinates, as (x, y, w, h).
+
+    `margin` is the view's current side margin, `top_y` the y of the block's
+    first line, and `bottom_y` / `bottom_h` the y and height of its last line,
+    as reported by the toolkit's get_line_yrange(). A line's height includes
+    the pixels above/below it, so the block's extra GAP is trimmed off both
+    ends, and the view's own line spacing (`below_lines`, added under every
+    line) is trimmed from the bottom so the box ends just under the last line.
+    """
+    x = margin
+    w = max(0, view_width - 2 * margin)
+    y = top_y + CODE_BOX_GAP
+    bottom = bottom_y + bottom_h - CODE_BOX_GAP - max(0, int(below_lines))
+    return (x, y, w, max(0, bottom - y))

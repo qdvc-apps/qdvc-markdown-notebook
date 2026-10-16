@@ -13,6 +13,8 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Pango  # noqa: E402
 
+from .. import highlight_rules
+
 
 class MarkdownHighlighter:
     """
@@ -28,6 +30,9 @@ class MarkdownHighlighter:
         # Gtk.TextBuffer stores text plus "tags" that style ranges of it.)
         self.buffer = buffer
         self._code_font = code_font
+        # (first_line, last_line) of each fenced block, refreshed by
+        # highlight(); the editor's text view draws a box around each.
+        self.code_blocks = []
         self._make_tags()
         self.set_code_font(code_font)
 
@@ -87,7 +92,9 @@ class MarkdownHighlighter:
         ensure("list", foreground="#a40000", weight=Pango.Weight.BOLD)
         ensure("hr", foreground="#888888")
         ensure("code_inline", foreground="#ce5c00", background="#f0f0f0")
-        ensure("code_block", foreground="#4e9a06", background="#f5f5f5")
+        # No background on fenced code: the text view draws a box around the
+        # whole block instead (a tag background only shades the characters).
+        ensure("code_block", foreground="#4e9a06")
         ensure("bold", weight=Pango.Weight.BOLD)
         ensure("italic", style=Pango.Style.ITALIC)
         ensure("link", foreground="#3465a4", underline=Pango.Underline.SINGLE)
@@ -117,6 +124,7 @@ class MarkdownHighlighter:
             buf.remove_tag_by_name(name, start, end)
 
         text = buf.get_text(start, end, True)
+        self.code_blocks = highlight_rules.fence_blocks(text)
         lines = text.split("\n")
 
         in_fence = False

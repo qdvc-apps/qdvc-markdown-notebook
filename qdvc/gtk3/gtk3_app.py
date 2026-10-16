@@ -11,8 +11,10 @@ be passed on the command line):
   * ``do_activate`` builds the single main window;
   * ``do_open`` routes a folder argument to a (new or existing) window.
 
-The themed icon name is defined here once as ``ICON_NAME`` (re-exporting the
-shared ``config.STOCK_ICON_NAME``) so it is trivial to override (spec §7.3).
+The themed icon name is defined here once as ``ICON_NAME`` (the app's own icon,
+``config.BUNDLED_ICON_NAME``) so it is trivial to override (spec §7.3).
+``resolve_icon_name()`` falls back to the stock ``FALLBACK_ICON_NAME`` when the
+icon theme cannot find it, so no bundled image is ever required.
 """
 
 import gi
@@ -20,12 +22,32 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk, Gio, GLib  # noqa: E402
 
-from ..config import APP_ID, PRGNAME, STOCK_ICON_NAME
+from ..config import APP_ID, PRGNAME, BUNDLED_ICON_NAME, STOCK_ICON_NAME
+from ..settings import bundled_icons_dir
 from .gtk3_window import NotebookWindow
 
 # The default themed icon name (spec §7.3). Defined once here (and mirrored in
-# gtk4_app.ICON_NAME) so overriding the app icon is a one-line change.
-ICON_NAME = STOCK_ICON_NAME
+# gtk4_app.ICON_NAME) so overriding the app icon is a one-line change. It is
+# the app's own icon (data/icons, installed by scripts/build-app.sh); the stock
+# fallback is used when the theme cannot find it.
+ICON_NAME = BUNDLED_ICON_NAME
+FALLBACK_ICON_NAME = STOCK_ICON_NAME
+
+
+def resolve_icon_name():
+    """
+    ICON_NAME if the icon theme can find it, else FALLBACK_ICON_NAME. The
+    bundled data/icons folder (a hicolor-style theme root) is added to the
+    theme's search path first, so the app's icon also shows when running
+    straight from a checkout.
+    """
+    theme = Gtk.IconTheme.get_default()
+    if theme is None:  # pragma: no cover - no display
+        return FALLBACK_ICON_NAME
+    folder = bundled_icons_dir()
+    if folder and folder not in (theme.get_search_path() or []):
+        theme.append_search_path(folder)
+    return ICON_NAME if theme.has_icon(ICON_NAME) else FALLBACK_ICON_NAME
 
 # Load-bearing: matches the .desktop StartupWMClass so the panel associates the
 # running window with its launcher (spec §7.2). Set at import.
@@ -44,7 +66,19 @@ class NotebookApp(Gtk.Application):
         Gtk.Application.do_startup(self)
         # App-wide default icon so dialogs and the panel/taskbar show it before
         # any .desktop matching (spec §7.3).
-        Gtk.Window.set_default_icon_name(ICON_NAME)
+        Gtk.Window.set_default_icon_name(resolve_icon_name())
+        # app.quit, reachable over D-Bus: scripts/build-app.sh uses it to close
+        # a running copy before reinstalling. It goes through the window's own
+        # Quit (unsaved-changes prompt, session save).
+        quit_action = Gio.SimpleAction.new("quit", None)
+        quit_action.connect("activate", self._on_quit_action)
+        self.add_action(quit_action)
+
+    def _on_quit_action(self, _action, _param):
+        if self._window is not None:
+            self._window.on_quit(None)
+        else:
+            self.quit()
 
     def do_activate(self):
         # Launched with no folder argument: show the main window (creating it

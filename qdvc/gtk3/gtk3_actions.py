@@ -496,6 +496,7 @@ class ActionsMixin:
         self._apply_code_font()
         self._apply_preview_font()
         self._apply_line_spacing()
+        self._apply_content_width()
         self._apply_toolbar_style()
         self._apply_tab_title_length()
         self._apply_icon_set()
@@ -561,8 +562,8 @@ class ActionsMixin:
         A GdkPixbuf is an in-memory image; new_from_file_at_size loads and scales
         a file in one step. set_logo takes a pixbuf, set_logo_icon_name takes a
         themed-icon name instead. The import is local because GdkPixbuf is only
-        needed on this rarely-hit path. ("accessories-text-editor" is the stock
-        fallback icon — left inline as it is an icon name, not display text.)
+        needed on this rarely-hit path. Without a custom set, the logo is the
+        app's own themed icon (or the stock fallback), as resolved at startup.
         """
         files = icon_set_files(self.settings.icon_set_dir)
         if files:
@@ -585,7 +586,7 @@ class ActionsMixin:
             # Pixbuf load failed but a set exists: use the themed name we install.
             dialog.set_logo_icon_name(APP_ICON_NAME)
             return
-        dialog.set_logo_icon_name("accessories-text-editor")
+        dialog.set_logo_icon_name(self._default_icon_name())
 
     def on_sort_changed(self, widget, mode):
         # Fired by a sort RadioMenuItem's "toggled". A radio group fires twice

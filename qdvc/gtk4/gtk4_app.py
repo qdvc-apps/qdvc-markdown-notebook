@@ -10,21 +10,42 @@ Bootstraps the modern front-end:
     from the shared ``ui_prefs.SHORTCUTS`` table (spec §10);
   * ``do_activate`` / ``do_open`` build/route the single main window.
 
-``ICON_NAME`` mirrors gtk3_app.ICON_NAME (both re-export config.STOCK_ICON_NAME).
+``ICON_NAME`` mirrors gtk3_app.ICON_NAME (both re-export
+config.BUNDLED_ICON_NAME, the app's own icon); ``resolve_icon_name()`` falls back
+to the stock ``FALLBACK_ICON_NAME`` when the icon theme cannot find it.
 """
 
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk, Adw, Gio, GLib  # noqa: E402
+from gi.repository import Gtk, Adw, Gdk, Gio, GLib  # noqa: E402
 
-from ..config import APP_ID, PRGNAME, STOCK_ICON_NAME
+from ..config import APP_ID, PRGNAME, BUNDLED_ICON_NAME, STOCK_ICON_NAME
+from ..settings import bundled_icons_dir
 from .. import ui_prefs
 from .gtk4_window import NotebookWindow
 from .gtk4_shortcuts import build_shortcuts_window
 
-ICON_NAME = STOCK_ICON_NAME
+ICON_NAME = BUNDLED_ICON_NAME
+FALLBACK_ICON_NAME = STOCK_ICON_NAME
+
+
+def resolve_icon_name():
+    """
+    ICON_NAME if the icon theme can find it, else FALLBACK_ICON_NAME. The
+    bundled data/icons folder (a hicolor-style theme root) is added to the
+    theme's search path first, so the app's icon also shows when running
+    straight from a checkout.
+    """
+    display = Gdk.Display.get_default()
+    if display is None:  # pragma: no cover - no display
+        return FALLBACK_ICON_NAME
+    theme = Gtk.IconTheme.get_for_display(display)
+    folder = bundled_icons_dir()
+    if folder and folder not in (theme.get_search_path() or []):
+        theme.add_search_path(folder)
+    return ICON_NAME if theme.has_icon(ICON_NAME) else FALLBACK_ICON_NAME
 
 GLib.set_prgname(PRGNAME)
 
@@ -39,8 +60,20 @@ class NotebookApp(Adw.Application):
 
     def do_startup(self):
         Adw.Application.do_startup(self)
-        Gtk.Window.set_default_icon_name(ICON_NAME)
+        Gtk.Window.set_default_icon_name(resolve_icon_name())
         self._register_accels()
+        # app.quit, reachable over D-Bus: scripts/build-app.sh uses it to close
+        # a running copy before reinstalling. It goes through the window's own
+        # Quit (unsaved-changes prompt, session save).
+        quit_action = Gio.SimpleAction.new("quit", None)
+        quit_action.connect("activate", self._on_quit_action)
+        self.add_action(quit_action)
+
+    def _on_quit_action(self, _action, _param):
+        if self._window is not None:
+            self._window.on_quit(None, None)
+        else:
+            self.quit()
 
     def _register_accels(self):
         """Register accelerators for win.* actions from the shared table."""

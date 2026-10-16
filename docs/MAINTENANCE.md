@@ -28,18 +28,20 @@ qdvc_markdown_notebook.py        # thin dispatcher: --gtk3/--gtk4 → ui_backend
 qdvc/
     __init__.py                  # APP_ID, APP_NAME, __version__ re-exports
     # ---- GTK-free pure core (no GTK import; unit-testable headless) ----
-    config.py                    # constants, sort modes, NODE_* kinds, APP_ID/PRGNAME/icon
+    config.py                    # constants, sort modes, NODE_* kinds, APP_ID/PRGNAME/icons
     model.py                     # data layer: Note + filesystem + disk I/O + outline parse
     settings.py                  # persistent user settings (YAML) + icon-set/.desktop install
     pango_markdown.py            # Markdown → Pango-markup string renderer (no GTK widget)
     strings.py                   # all user-facing UI text, in one place (for i18n)
     ui_prefs.py                  # shared SHORTCUTS table + toolkit-independent UI helpers
+                                 # (incl. content-width / code-box geometry)
     platform_utils.py            # launch system apps (viewer/editor/file manager)
     highlight_rules.py           # toolkit-independent markdown highlight rules/spans
     # ---- GTK3 view/controller (qdvc/gtk3/, prefaced gtk3_) ----
     gtk3/gtk3_app.py             # NotebookApp: the Gtk.Application (id, icon, prgname)
     gtk3/gtk3_highlighter.py     # MarkdownHighlighter (GTK TextBuffer tagging)
     gtk3/gtk3_editortab.py       # EditorTab: one tab's editor widget + state
+    gtk3/gtk3_textview.py        # ContentTextView: max-width column + code-fence boxes
     gtk3/gtk3_preferences.py     # PreferencesDialog: the *view* for settings.py
     gtk3/gtk3_menubar.py         # MenuBarMixin: the window's menu bar
     gtk3/gtk3_toolbar.py         # ToolbarMixin: the window's toolbar + styling
@@ -52,9 +54,16 @@ qdvc/
     gtk4/gtk4_window.py          # NotebookWindow: Adw window, panes, handlers
     gtk4/gtk4_actions.py         # ActionsMixin: win.* Gio.SimpleActions
     gtk4/gtk4_editorview.py      # EditorView: one tab's editor widget + state
+    gtk4/gtk4_textview.py        # ContentTextView: max-width column + code-fence boxes
     gtk4/gtk4_highlighter.py     # MarkdownHighlighter (reuses highlight_rules)
     gtk4/gtk4_preferences.py     # PreferencesWindow: Adw.PreferencesWindow (live-apply)
     gtk4/gtk4_shortcuts.py       # Gtk.ShortcutsWindow from the shared SHORTCUTS table
+data/
+    icons/hicolor/...            # the app icon + symbolic variant (a theme root)
+    qdvc.MarkdownNotebook.desktop.in  # launcher template (@BINDIR@ filled in)
+scripts/build-app.sh             # check deps, test, stage, --install / --uninstall
+tools/make_icon.py               # regenerates data/icons (GNOME-style SVGs)
+tests/test_core.py               # unittest suite for the GTK-free core
 ```
 
 View modules reach the pure core with `from ..` and siblings with `from .gtk3_x`
@@ -95,6 +104,10 @@ config → default `gtk3`. Run from the directory containing both the script and
 - PyGObject and **exactly one** of the two toolkits at runtime:
   - GTK 3 (`python3-gi`, `gir1.2-gtk-3.0`) — the default front-end; or
   - GTK 4 + libadwaita (`gir1.2-gtk-4.0`, `gir1.2-adw-1`) — the modern one.
+- PyGObject's cairo support (`python3-gi-cairo`) — optional, GTK 3 only: it draws
+  the boxes around fenced code (`gtk3_textview.HAVE_CAIRO`). Without it the GTK 3
+  front-end falls back to a flat band behind each block. GTK 4 draws with
+  GtkSnapshot and needs no cairo bindings.
 - `Pango`, `Gdk`, `GLib`, `Gio` come with the GTK introspection data.
 - **PyYAML** — used by `settings.py` to persist user settings. If it is missing
   the app still runs with default settings; nothing is saved and a one-line
@@ -116,7 +129,9 @@ layer ordering. The core imports no GTK and is unit-testable headless; the GTK3
 layer depends on the core but never the reverse.
 
 ### 3.0 `config.py` (core)
-Plain constants only — `APP_NAME`, `MARKDOWN_EXTENSIONS`, the `SORT_*` mode
+Plain constants only — `APP_NAME`, the identity constants (`APP_ID`, `PRGNAME`,
+`BUNDLED_ICON_NAME` = the app's own icon named after `APP_ID`, and the stock
+fallback `STOCK_ICON_NAME`), `MARKDOWN_EXTENSIONS`, the `SORT_*` mode
 strings, the `ALL_NOTES` sentinel, and the sidebar `NODE_*` kind strings
 (`NODE_ALL_NOTES`, `NODE_INBOX`, `NODE_EMPTY_NOTES`, `NODE_SUBFOLDERS`,
 `NODE_SUBFOLDER`). No
@@ -141,9 +156,12 @@ This is the **model** side of preferences (the *view* is `gtk3_preferences.py`,
   `[MIN_TAB_TITLE_LENGTH, MAX_TAB_TITLE_LENGTH]` via `_coerce_int_range`),
   `remember_sort` and `restore_session` (bools via `_coerce_bool`), `card_view`
   (bool via `_coerce_bool` — the remembered pane-2 card-view state, always
-  restored on launch, default off), `ui_backend` (`"gtk3"`/`"gtk4"`, read via the
+  restored on launch, default off), `limit_content_width` (bool, default on) and
+  `max_content_width` (int px, default 1000, clamped to `[MIN_MAX_CONTENT_WIDTH,
+  MAX_MAX_CONTENT_WIDTH]`) — read together via `content_max_width()` (the limit
+  in px, or `None` when off) and restored by `reset_content_width()`, `ui_backend` (`"gtk3"`/`"gtk4"`, read via the
   validated `ui_backend` property that falls back to `gtk3`), `icon_set_dir`
-  (a folder path; `""` means the stock icon), `sort_mode` (a persisted `SORT_*`
+  (a folder path; `""` means the default icon), `sort_mode` (a persisted `SORT_*`
   string, or `None`), `last_workspace` + `last_open_notes` (the previous session's
   folder and open-note paths, for restore-on-startup), `last_node` +
   `last_subfolder` + `last_selected_note` (the previous sidebar/note-list
@@ -171,7 +189,18 @@ This is the **model** side of preferences (the *view* is `gtk3_preferences.py`,
   changing only its `Icon=` line when the file already exists (other lines
   preserved) and writing a full default entry when it doesn't. `_data_home()`
   resolves `$XDG_DATA_HOME` or `~/.local/share`. `APP_ICON_NAME` =
-  `qdvc-markdown-notebook`.
+  `qdvc-markdown-notebook` (the *custom* set's name, kept apart from the bundled
+  `BUNDLED_ICON_NAME` so clearing a custom set never removes the app's own icon).
+- Launcher identity: `DESKTOP_FILE_ID` is `qdvc.MarkdownNotebook.desktop` (the
+  application id, as `scripts/build-app.sh` installs it, so GNOME Shell on Wayland
+  pairs the window with it). `update_desktop_icon` first calls
+  `_migrate_legacy_desktop_file()`, which renames an old
+  `qdvc-markdown-notebook.desktop` (`LEGACY_DESKTOP_FILE_ID`) when the new one does
+  not exist yet, and it leaves an unchanged file untouched. `default_icon_name()`
+  is the `Icon=` value when no custom set is configured: `BUNDLED_ICON_NAME` once
+  `installed_app_icon_available()` finds it under an XDG data dir's hicolor theme,
+  else `STOCK_ICON_NAME` (other launchers cannot see the checkout's `data/icons`).
+  `bundled_icons_dir()` locates `data/icons` for the in-process icon theme.
 - `save()` writes atomically (temp file + `os.replace`) and returns a bool.
 - `add_recent_folder()` dedups (moves existing to front), prunes directories that
   no longer exist, and caps the list.
@@ -192,7 +221,11 @@ This is the **model** side of preferences (the *view* is `gtk3_preferences.py`,
   if you need to support very large files, switch to highlighting only the
   changed line range (track via the buffer's `insert-text`/`delete-range`).
 - Fenced code blocks (```` ``` ````) are tracked with the `in_fence` toggle as
-  lines are scanned in order. Headings are matched first via `_heading_rgx`
+  lines are scanned in order. Their `code_block` tag sets colour and font only —
+  no `background`, which would shade just the characters; instead `highlight()`
+  also stores `code_blocks` (from `highlight_rules.fence_blocks`, the
+  `(first_line, last_line)` of each block, fences included) and the editor tab
+  hands them to its `ContentTextView`, which draws one box around each (§3.2a). Headings are matched first via `_heading_rgx`
   (which captures the leading `#`s), then the other line-level rules
   (blockquotes, lists, hr) and inline rules (inline code, bold, italic, links),
   each a list of `(tag_name, compiled_regex, group)` tuples.
@@ -218,10 +251,15 @@ This is the **model** side of preferences (the *view* is `gtk3_preferences.py`,
 
 ### 3.1a `pango_markdown.py` — Markdown → Pango markup (core; no GTK)
 `render(text, code_font=None)` converts a Markdown subset to a Pango markup string
-for Preview mode (no WebKit). Pango markup is inline-only (`<b>`, `<i>`, `<tt>`,
+for Preview mode (no WebKit). The previews use `render_blocks(text, code_font)`,
+which returns the same markup as `(kind, markup)` segments — `BLOCK_TEXT` runs and
+one `BLOCK_CODE` per fenced block (fences dropped) — whose markups joined with
+`\n` are exactly `render(...)`; inserting segment by segment tells the preview
+which lines each code block occupies, so it can box them. Pango markup is inline-only (`<b>`, `<i>`, `<tt>`,
 `<span>`, size/weight/foreground), so block structure is approximated: headings
 become sized+bold spans, lists get bullet/number prefixes with indentation,
-blockquotes a `\u2503` bar + italics, fenced/inline code with a grey background,
+blockquotes a `\u2503` bar + italics, inline code with a grey background (fenced
+code gets no background: the preview draws a box around the block instead),
 horizontal rules a line of dashes, links the underlined coloured text (the URL is
 dropped — markup can't make clickable links). Heading colours come from
 `_HEADING_COLOUR`: black (H1) shading to progressively lighter greys (H2–H6) —
@@ -317,6 +355,19 @@ window. Each `EditorTab` owns its own `Gtk.TextView`, `Gtk.TextBuffer`,
 `TextView` editability and the tab-label padlock icon; `set_preview(on)` switches
 the stack child and the tab-label preview icon. `set_editable` is the low-level
 helper `set_read_only` calls.
+- The editor and the preview are both `gtk3_textview.ContentTextView`s (the
+  GTK 4 twin is `gtk4_textview`; numbers and geometry live in `ui_prefs`). It
+  adds two things to a `Gtk.TextView`: `set_max_content_width(px | None)` centres
+  a text column of at most that width by growing the side margins (recomputed on
+  `size-allocate`, applied from an idle so the relayout never happens mid-
+  allocation), and `set_code_blocks([(first, last), ...])` tags those lines with
+  an inset margin and extra padding above/below and draws one rounded box behind
+  each block in `do_draw_layer(BELOW_TEXT)` (buffer coordinates), tinted from the
+  view's text colour. `set_line_spacing(px)` replaces the two raw spacing setters
+  so the code padding can add the spacing back. `apply_content_width(px)` sets
+  both views; `_highlight()` re-tags and re-boxes after every load/edit, and
+  `_render_preview()` inserts `pango_markdown.render_blocks` segments one at a
+  time and boxes the code segments.
 - `widget` — the page widget added to the `Gtk.Notebook`. It is a `Gtk.Stack`
   with three named children: `"editor"` (a scrolled `TextView`), `"preview"` (a
   read-only `TextView` showing rendered markdown), and `"placeholder"` (a centred
@@ -382,7 +433,11 @@ with a `Gtk.Notebook` of two tabs. **Fonts**: `Gtk.FontButton`s for editor font,
 code font, and markdown-preview font, plus two `Gtk.SpinButton`s for editor and
 preview line spacing (range `MIN_LINE_SPACING`..`MAX_LINE_SPACING`). **Interface**:
 a radio pair for toolbar text below vs beside icons; a `Gtk.SpinButton` for the
-tab-title length (`MIN_TAB_TITLE_LENGTH`..`MAX_TAB_TITLE_LENGTH`); two
+tab-title length (`MIN_TAB_TITLE_LENGTH`..`MAX_TAB_TITLE_LENGTH`); the
+**content width** controls — a `Gtk.CheckButton` turning the limit on/off, a
+`Gtk.SpinButton` for the width in pixels (greyed out while the limit is off), and
+a *Reset to default* button (both back to on / 1000 px; a `_syncing_width` guard
+keeps the programmatic widget updates from re-entering the handlers); two
 `Gtk.CheckButton`s for *remember sort order* and *restore session*; a radio pair
 selecting the **UI backend** (GTK 3 / GTK 4, spec §3 — MUST be exposed from both
 UIs' Preferences); and a `Gtk.FileChooserButton` (+ a Clear button) for the
@@ -621,15 +676,15 @@ open the respective menus.
 
 Settings wiring: `__init__` calls `Settings.load()`, then after `_build_ui()`
 calls `_apply_editor_font()`, `_apply_code_font()`, `_apply_preview_font()`,
-`_apply_line_spacing()`, and `_rebuild_recent_menu()`. `open_folder()` calls
+`_apply_line_spacing()`, `_apply_content_width()`, and `_rebuild_recent_menu()`. `open_folder()` calls
 `_remember_folder()` (which records, saves, and refreshes the recent-workspace
 menu). Font, spacing, and toolbar-style changes flow through the Preferences
 dialog, whose `on_apply` callback (`_apply_preferences`) re-applies the editor
-font, code font, preview font, line spacings, toolbar style, **tab-title length**
+font, code font, preview font, line spacings, content width, toolbar style, **tab-title length**
 (`_apply_tab_title_length` → `tab.set_tab_title_length` on every tab), and the
 **icon set** (`_apply_icon_set`) to the live UI. `_apply_editor_font` /
 `_apply_code_font` / `_apply_preview_font` / `_apply_line_spacing` /
-`_apply_tab_title_length` iterate **all** tabs; `_apply_toolbar_style` maps
+`_apply_content_width` / `_apply_tab_title_length` iterate **all** tabs; `_apply_toolbar_style` maps
 `settings.toolbar_style` to a `Gtk.ToolbarStyle` (`BOTH` = below, `BOTH_HORIZ` =
 beside) via `_toolbar_style_enum()`. `on_open_recent` opens a folder from the menu
 (handling the case where it has since been deleted). On quit / window close,
@@ -848,11 +903,28 @@ is in the header above.
   `~/.config/qdvc-markdown-notebook/config.yml` (spec §5). Configs written by
   pre-spec builds under the old `qdvcmdnb` subdirectory are migrated once on first
   load (`_migrate_legacy_config`).
-- **Desktop integration.** The app ships no installer; the base `.desktop` file
-  is set up by hand (see README). Choosing a custom icon set in Preferences makes
-  the app install icons into the user's hicolor theme and **rewrite the per-user
-  `.desktop` file's `Icon=` line** itself (`update_desktop_icon`), so a
-  hand-edited `Icon=` line may be overwritten on the next icon-set change.
+- **Desktop integration.** `scripts/build-app.sh --install` (modelled on the
+  family's GNOME apps, qdvc-progress-gtk4 and qdvc-gtd-eml-gtk4) installs the app,
+  a launcher, the `.desktop` file and the icons under `~/.local`; the README
+  still documents writing the launcher by hand. Choosing a custom icon set in
+  Preferences makes the app install icons into the user's hicolor theme and
+  **rewrite the per-user `.desktop` file's `Icon=` line** itself
+  (`update_desktop_icon`), so a hand-edited `Icon=` line may be overwritten on
+  the next icon-set change.
+- **Launcher name (spec §7.4).** The spec names the launcher
+  `qdvc-<app>.desktop`; this app uses `qdvc.MarkdownNotebook.desktop`, the
+  application id, like the family's GNOME apps. GNOME Shell on Wayland matches a
+  window to its launcher by application id (`StartupWMClass` only helps on X11),
+  so under the spec's name the window is not matched to its launcher there
+  (a generic icon and a separate Dock entry). An
+  old `qdvc-markdown-notebook.desktop` is renamed by the app (or removed by the
+  installer, which writes the new one). `StartupWMClass=qdvc-markdown-notebook`
+  is kept for X11.
+- **Default icon (spec §7.3).** The spec's default is a stock themed icon; this
+  app defaults to its own bundled icon (`BUNDLED_ICON_NAME`, `data/icons`), and
+  keeps the spec's guarantee by falling back to the stock
+  `accessories-text-editor` whenever the icon theme cannot find it — no bundled
+  image is ever *required*.
 - **Not yet present.** No `validate()` on the model (spec §6, a SHOULD — the flat
   markdown workspace has little to validate); no `Gtk.Calendar` date entry (spec
   §8.2 — the app has no date-entry fields).
@@ -926,8 +998,12 @@ is in the header above.
 
 ## 8. Testing
 
-There is no formal test suite yet, but the refactor makes the model layer
-testable without a display, since the core modules (`config.py`, `model.py`,
+`tests/test_core.py` is a `unittest` suite for the GTK-free core — fence blocks
+and the preview's code segments, the content-width and code-box geometry, the
+content-width settings, and the icon / launcher identity helpers. Run it with
+`python3 -m unittest discover -s tests -t .`; `scripts/build-app.sh` runs it before
+staging and refuses to install if it fails. The rest of this section predates
+the suite. The model layer is testable without a display, since the core modules (`config.py`, `model.py`,
 `settings.py`, `pango_markdown.py`, `strings.py`) import no GTK. The GTK3 view modules
 (`gtk3_*.py`) need GTK to import, but can be sanity-checked for composition (that
 `NotebookWindow` resolves all its mixin methods) with a stubbed `gi`.
@@ -969,3 +1045,11 @@ Manual smoke test (needs GTK installed):
    `qdvc-markdown-notebook` icon appears under `~/.local/share/icons/hicolor`.
 8. Enable "reopen last workspace and notes"; quit with a selection and several
    tabs open; relaunch with no argument and confirm panes 1+2 and tabs restore.
+9. Open a note with fenced code: the editor and the preview draw one box around
+   each block (fences included in the editor), also after typing inside it, in
+   light and dark styles.
+10. Widen the window past 1000 px: the editor and preview text stay in a centred
+    column. Change the width / turn the limit off in Preferences (live), then
+    *Reset to default*.
+11. `scripts/build-app.sh --install`: the app appears in Activities with its icon
+    and pins to the Dock; running it again restarts a running copy.

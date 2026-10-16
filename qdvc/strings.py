@@ -185,6 +185,16 @@ class Prefs:
     TOOLBAR_TEXT_BELOW = "Below each icon"
     TOOLBAR_TEXT_BESIDE = "Beside each icon"
     TAB_TITLE_LENGTH = "Tab title length (characters):"
+    LIMIT_CONTENT_WIDTH = "Limit the width of the editor and preview text"
+    LIMIT_CONTENT_WIDTH_SUBTITLE = ("Centres the text in a column on wide "
+                                    "windows")
+    MAX_CONTENT_WIDTH = "Maximum content width (pixels):"
+    CONTENT_WIDTH_RESET = "Reset to default"
+
+    @staticmethod
+    def content_width_reset_tip(pixels):
+        return f"Turn the limit on, at the default of {pixels} pixels"
+
     REMEMBER_SORT = "Remember note sort order between sessions"
     RESTORE_SESSION = "Reopen last workspace and notes on startup"
     ICON_SET_LABEL = "Custom application icon set (folder):"
@@ -204,6 +214,7 @@ class Prefs:
     # Adwaita preference group headings.
     GROUP_FONTS = "Fonts"
     GROUP_SPACING = "Spacing"
+    GROUP_LAYOUT = "Layout"
     GROUP_INTERFACE = "Interface"
     GROUP_SESSION = "Session"
 

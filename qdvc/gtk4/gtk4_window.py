@@ -32,12 +32,12 @@ from gi.repository import Gtk, Adw, Gio, GObject, GLib, Gdk, Pango  # noqa: E402
 from .. import model
 from .. import platform_utils
 from ..config import (
-    APP_NAME, STOCK_ICON_NAME, SORT_ALPHA, SORT_DATE_NEW, SORT_DATE_OLD,
+    APP_NAME, SORT_ALPHA, SORT_DATE_NEW, SORT_DATE_OLD,
     NODE_ALL_NOTES, NODE_INBOX, NODE_EMPTY_NOTES, NODE_SUBFOLDER,
 )
 from ..settings import (
     Settings, icon_set_files, install_icon_set, uninstall_icon_set,
-    update_desktop_icon, APP_ICON_NAME,
+    update_desktop_icon, default_icon_name, APP_ICON_NAME,
 )
 from ..strings import Sidebar as SB, Status, Menu, Dialog as D
 from .. import strings
@@ -139,14 +139,18 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
              launchers (panel, Alt+Tab) resolve it;
           3. set the window + app-default icon name to APP_ICON_NAME.
 
-        When no/invalid set is configured, revert to the stock themed icon.
-        Every step is best-effort and falls back silently.
+        When no/invalid set is configured, revert to the default icon: the
+        app's own (config.BUNDLED_ICON_NAME) when the theme can find it, else
+        the stock themed icon. Every step is best-effort and falls back
+        silently.
         """
         files = icon_set_files(self.settings.icon_set_dir)
         if not files:
+            from .gtk4_app import resolve_icon_name
             uninstall_icon_set(APP_ICON_NAME)
-            update_desktop_icon(STOCK_ICON_NAME, exec_path=self._script_path())
-            self._set_window_icon_name(STOCK_ICON_NAME)
+            update_desktop_icon(default_icon_name(),
+                                exec_path=self._script_path())
+            self._set_window_icon_name(resolve_icon_name())
             return
 
         if install_icon_set(self.settings.icon_set_dir, APP_ICON_NAME):
@@ -206,6 +210,12 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
             self._css_font_rule("qdvc-preview", self.settings.preview_font),
         ])
         self._css.load_from_data(css.encode("utf-8"))
+
+    def _apply_layout_to(self, view):
+        """Apply the line-spacing and content-width preferences to one tab."""
+        view.apply_editor_line_spacing(self.settings.editor_line_spacing)
+        view.apply_preview_line_spacing(self.settings.preview_line_spacing)
+        view.apply_content_width(self.settings.content_max_width())
 
     def _apply_fonts_to_all(self):
         self._refresh_css()
@@ -759,6 +769,7 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         view = EditorView(on_changed=self._on_view_changed,
                           code_font=self.settings.code_font)
         view.apply_code_font(self.settings.code_font)
+        self._apply_layout_to(view)
         view.set_read_only(True)
         view.set_preview(False)
         self._views.append(view)
@@ -1219,6 +1230,7 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         self._refresh_css()
         for view in self._views:
             view.apply_code_font(self.settings.code_font)
+            self._apply_layout_to(view)
         # Re-apply the custom icon set in case it changed.
         self._apply_icon_set()
 
@@ -1227,9 +1239,9 @@ class NotebookWindow(ActionsMixin, Adw.ApplicationWindow):
         # is configured it has been installed into the hicolor theme under
         # APP_ICON_NAME (see _apply_icon_set), so pass that themed name; else the
         # stock icon. Mirrors the GTK 3 _set_about_logo resolution order.
-        from .gtk4_app import ICON_NAME
+        from .gtk4_app import resolve_icon_name
         icon_name = (APP_ICON_NAME if icon_set_files(self.settings.icon_set_dir)
-                     else ICON_NAME)
+                     else resolve_icon_name())
         about = Adw.AboutWindow(transient_for=self) \
             if hasattr(Adw, "AboutWindow") else None
         if about is not None:
